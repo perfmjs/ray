@@ -17,7 +17,8 @@ CoreWorkerObjectInterface::CoreWorkerObjectInterface(
 
 Status CoreWorkerObjectInterface::Put(const RayObject &object, ObjectID *object_id) {
   ObjectID put_id = ObjectID::ForPut(worker_context_.GetCurrentTaskID(),
-                                     worker_context_.GetNextPutIndex());
+                                     worker_context_.GetNextPutIndex(),
+                                     /*transport_type=*/0);
   *object_id = put_id;
   return Put(object, put_id);
 }
@@ -66,6 +67,7 @@ std::unique_ptr<CoreWorkerStoreProvider> CoreWorkerObjectInterface::CreateStoreP
     RAY_LOG(FATAL) << "unknown store provider type " << static_cast<int>(type);
     break;
   }
+  return nullptr;
 }
 
 }  // namespace ray
