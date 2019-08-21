@@ -92,7 +92,7 @@ Status Log<ID, Data>::Lookup(const JobID &job_id, const ID &id, const Callback &
         GcsEntry gcs_entry;
         gcs_entry.ParseFromString(reply.ReadAsString());
         RAY_CHECK(ID::FromBinary(gcs_entry.id()) == id);
-        for (size_t i = 0; i < gcs_entry.entries_size(); i++) {
+        for (int64_t i = 0; i < gcs_entry.entries_size(); i++) {
           Data data;
           data.ParseFromString(gcs_entry.entries(i));
           results.emplace_back(std::move(data));
@@ -142,7 +142,7 @@ Status Log<ID, Data>::Subscribe(const JobID &job_id, const ClientID &client_id,
         gcs_entry.ParseFromString(data);
         ID id = ID::FromBinary(gcs_entry.id());
         std::vector<Data> results;
-        for (size_t i = 0; i < gcs_entry.entries_size(); i++) {
+        for (int64_t i = 0; i < gcs_entry.entries_size(); i++) {
           Data result;
           result.ParseFromString(gcs_entry.entries(i));
           results.emplace_back(std::move(result));
@@ -162,22 +162,44 @@ Status Log<ID, Data>::Subscribe(const JobID &job_id, const ClientID &client_id,
 
 template <typename ID, typename Data>
 Status Log<ID, Data>::RequestNotifications(const JobID &job_id, const ID &id,
-                                           const ClientID &client_id) {
+                                           const ClientID &client_id,
+                                           const StatusCallback &done) {
   RAY_CHECK(subscribe_callback_index_ >= 0)
       << "Client requested notifications on a key before Subscribe completed";
+
+  RedisCallback callback = nullptr;
+  if (done != nullptr) {
+    callback = [done](const CallbackReply &reply) {
+      const auto status = reply.IsNil()
+                              ? Status::OK()
+                              : Status::RedisError("request notifications failed.");
+      done(status);
+    };
+  }
+
   return GetRedisContext(id)->RunAsync("RAY.TABLE_REQUEST_NOTIFICATIONS", id,
                                        client_id.Data(), client_id.Size(), prefix_,
-                                       pubsub_channel_, nullptr);
+                                       pubsub_channel_, callback);
 }
 
 template <typename ID, typename Data>
 Status Log<ID, Data>::CancelNotifications(const JobID &job_id, const ID &id,
-                                          const ClientID &client_id) {
+                                          const ClientID &client_id,
+                                          const StatusCallback &done) {
   RAY_CHECK(subscribe_callback_index_ >= 0)
       << "Client canceled notifications on a key before Subscribe completed";
+
+  RedisCallback callback = nullptr;
+  if (done != nullptr) {
+    callback = [done](const CallbackReply &reply) {
+      const auto status = reply.ReadAsStatus();
+      done(status);
+    };
+  }
+
   return GetRedisContext(id)->RunAsync("RAY.TABLE_CANCEL_NOTIFICATIONS", id,
                                        client_id.Data(), client_id.Size(), prefix_,
-                                       pubsub_channel_, nullptr);
+                                       pubsub_channel_, callback);
 }
 
 template <typename ID, typename Data>
@@ -621,7 +643,8 @@ Status ClientTable::Connect(const GcsNodeInfo &local_node_info) {
     // Callback to request notifications from the client table once we've
     // successfully subscribed.
     auto subscription_callback = [this](RedisGcsClient *c) {
-      RAY_CHECK_OK(RequestNotifications(JobID::Nil(), client_log_key_, node_id_));
+      RAY_CHECK_OK(RequestNotifications(JobID::Nil(), client_log_key_, node_id_,
+                                        /*done*/ nullptr));
     };
     // Subscribe to the client table.
     RAY_CHECK_OK(
@@ -636,7 +659,8 @@ Status ClientTable::Disconnect(const DisconnectCallback &callback) {
   auto add_callback = [this, callback](RedisGcsClient *client, const ClientID &id,
                                        const GcsNodeInfo &data) {
     HandleConnected(client, data);
-    RAY_CHECK_OK(CancelNotifications(JobID::Nil(), client_log_key_, id));
+    RAY_CHECK_OK(
+        CancelNotifications(JobID::Nil(), client_log_key_, id, /*done*/ nullptr));
     if (callback != nullptr) {
       callback();
     }

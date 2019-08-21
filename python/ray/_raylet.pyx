@@ -86,7 +86,7 @@ cdef VectorToObjectIDs(c_vector[CObjectID] object_ids):
 
 
 def compute_put_id(TaskID task_id, int64_t put_index):
-    if put_index < 1 or put_index > CObjectID.MaxObjectIndex():
+    if put_index < 1 or put_index > <int64_t>CObjectID.MaxObjectIndex():
         raise ValueError("The range of 'put_index' should be [1, %d]"
                          % CObjectID.MaxObjectIndex())
     return ObjectID(CObjectID.ForPut(task_id.native(), put_index, 0).Binary())
@@ -374,7 +374,7 @@ cdef class RayletClient:
 
     @property
     def client_id(self):
-        return ClientID(self.client.get().GetWorkerId().Binary())
+        return ClientID(self.client.get().GetWorkerID().Binary())
 
     @property
     def job_id(self):

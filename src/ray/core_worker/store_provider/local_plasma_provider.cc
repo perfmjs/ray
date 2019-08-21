@@ -19,9 +19,16 @@ Status CoreWorkerLocalPlasmaStoreProvider::Put(const RayObject &object,
   std::shared_ptr<arrow::Buffer> out_buffer;
   {
     std::unique_lock<std::mutex> guard(store_client_mutex_);
-    RAY_ARROW_RETURN_NOT_OK(store_client_.Create(
+    arrow::Status status = store_client_.Create(
         plasma_id, data ? data->Size() : 0, metadata ? metadata->Data() : nullptr,
-        metadata ? metadata->Size() : 0, &out_buffer));
+        metadata ? metadata->Size() : 0, &out_buffer);
+    if (plasma::IsPlasmaObjectExists(status)) {
+      // TODO(hchen): Should we propagate this error out of `ObjectInterface::put`?
+      RAY_LOG(WARNING) << "Trying to put an object that already existed in plasma: "
+                       << object_id << ".";
+      return Status::OK();
+    }
+    RAY_ARROW_RETURN_NOT_OK(status);
   }
 
   if (data != nullptr) {
@@ -67,7 +74,7 @@ Status CoreWorkerLocalPlasmaStoreProvider::Wait(const std::vector<ObjectID> &obj
                                                 int num_objects, int64_t timeout_ms,
                                                 const TaskID &task_id,
                                                 std::vector<bool> *results) {
-  if (num_objects != object_ids.size()) {
+  if (num_objects != static_cast<int>(object_ids.size())) {
     return Status::Invalid("num_objects should equal to number of items in object_ids");
   }
 
