@@ -14,7 +14,8 @@ import pytest
 import ray
 import ray.ray_constants as ray_constants
 from ray.tests.cluster_utils import Cluster
-from ray.tests.utils import run_string_as_driver_nonblocking
+from ray.tests.utils import (run_string_as_driver_nonblocking,
+                             RayTestTimeoutException)
 
 
 # This test checks that when a worker dies in the middle of a get, the plasma
@@ -198,7 +199,7 @@ def ray_start_workers_separate_multinode(request):
     cluster = Cluster()
     for _ in range(num_nodes):
         cluster.add_node(num_cpus=num_initial_workers)
-    ray.init(redis_address=cluster.redis_address)
+    ray.init(address=cluster.address)
 
     yield num_nodes, num_initial_workers
     # The code after the yield will run as teardown code.
@@ -224,7 +225,8 @@ def test_worker_failed(ray_start_workers_separate_multinode):
         for pid in new_pids:
             pids.add(pid)
         if time.time() - start_time > 60:
-            raise Exception("Timed out while waiting to get worker PIDs.")
+            raise RayTestTimeoutException(
+                "Timed out while waiting to get worker PIDs.")
 
     @ray.remote
     def f(x):

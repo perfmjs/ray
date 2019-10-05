@@ -3,12 +3,19 @@ Release Process
 
 This document describes the process for creating new releases.
 
-1. **Increment the Python version:** Create a PR that increments the Python
-   package version. See `this example`_.
+1. **Create a release branch:** Create the branch from the desired commit on master
+   In order to create the branch, locally checkout the commit ID i.e.,
+   ``git checkout <hash>``. Then checkout a new branch of the format
+   ``releases/<release-version>``. Then push that branch to the ray repo:
+   ``git push upstream releases/<release-version>``.
 
-2. **Bump version on Ray master branch again:** Create a pull request to
-   increment the version of the master branch. The format of the new version is
-   as follows:
+2. **Update the release branch version:** Push a commit that increments the Python
+   package version in python/ray/__init__.py. You can push this directly to the
+   release branch.
+
+3. **Update the master branch version:** Create a pull request to
+   increment the version of the master branch, see `this PR`_.
+   The format of the new version is as follows:
 
    New minor release (e.g., 0.7.0): Increment the minor version and append
    ``.dev0`` to the version. For example, if the version of the new release is
@@ -19,13 +26,12 @@ This document describes the process for creating new releases.
    of the new release is 0.7.1, the master branch needs to be updated to
    0.8.0.dev1.
 
-   This can be merged as soon as step 1 is complete.
+   After the wheels for the new version are built, create and merge a
+   `PR like this`_.
 
-3. **Create a release branch:** Create the branch from the version bump PR (the
-   one from step 1, not step 2). In order to create the branch, locally checkout
-   the commit ID i.e., ``git checkout <hash>``. Then checkout a new branch of
-   the format ``releases/<release-version>``. Then push that branch to the ray
-   repo: ``git push upstream releases/<release-version>``.
+   These should be merged as soon as step 1 is complete to make sure the links
+   in the documentation keep working and the master stays on the development
+   version.
 
 4. **Testing:** Before a release is created, significant testing should be done.
    Run the following scripts
@@ -39,11 +45,22 @@ This document describes the process for creating new releases.
    This will use the autoscaler to start a bunch of machines and run some tests.
    **Caution!**: By default, the stress tests will require expensive GPU instances.
 
+   You'll also want to kick off the long-running tests:
+
+   .. code-block:: bash
+
+       ray/ci/long_running_tests/start_workloads.sh
+
+   You can use the `check_workloads.sh` script to verify the workloads are running.
+   Let them run for at least 24 hours, and check them again. They should all still
+   be running (printing new iterations), and their CPU load should be stable when
+   you view them in the AWS monitoring console (not increasing over time).
+
 5. **Resolve release-blockers:** If a release blocking issue arises, there are
    two ways the issue can be resolved: 1) Fix the issue on the master branch and
    cherry-pick the relevant commit  (using ``git cherry-pick``) onto the release
-   branch. 2) Revert the commit that introduced the bug on the release branch
-   (using ``git revert``), but not on the master.
+   branch (recommended). 2) Revert the commit that introduced the bug on the
+   release branch (using ``git revert``), but not on the master (not recommended).
 
    These changes should then be pushed directly to the release branch.
 
@@ -124,16 +141,24 @@ This document describes the process for creating new releases.
 
 
     At the end of the release note, you can add a list of contributors that help
-    creating this release. Use the ``dev/get_contributors.py`` to generate this
+    creating this release. Use the ``doc/dev/get_contributors.py`` to generate this
     list. You will need to create a GitHub token for this task. Example usage:
 
     .. code-block:: bash
+
       python get_contributors.py --help
       python get_contributors.py \
         --access-token=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
         --ray-path=$HOME/ray/ray \
         --prev-branch="ray-0.7.1" \
         --curr-branch="ray-0.7.2"
+
+    Run `ray microbenchmark` to get the latest microbenchmark numbers, and
+    update their numbers in `profiling.rst`.
+
+    .. code-block:: bash
+
+      ray microbenchmark
 
 10. **Update version numbers throughout codebase:** Suppose we just released
     0.7.1. The previous release version number (in this case 0.7.0) and the
@@ -149,4 +174,6 @@ This document describes the process for creating new releases.
     process so that whoever manages the release next will have an easier time.
 
 .. _`this example`: https://github.com/ray-project/ray/pull/4226
+.. _`this PR`: https://github.com/ray-project/ray/pull/5523
+.. _`PR like this`: https://github.com/ray-project/ray/pull/5585
 .. _`GitHub website`: https://github.com/ray-project/ray/releases

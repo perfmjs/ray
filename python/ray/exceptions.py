@@ -28,17 +28,48 @@ class RayTaskError(RayError):
         traceback_str (str): The traceback from the exception.
     """
 
-    def __init__(self, function_name, traceback_str):
+    def __init__(self,
+                 function_name,
+                 traceback_str,
+                 cause_cls,
+                 pid=None,
+                 host=None):
         """Initialize a RayTaskError."""
         if setproctitle:
             self.proctitle = setproctitle.getproctitle()
         else:
             self.proctitle = "ray_worker"
-        self.pid = os.getpid()
-        self.host = os.uname()[1]
+        self.pid = pid or os.getpid()
+        self.host = host or os.uname()[1]
         self.function_name = function_name
         self.traceback_str = traceback_str
+        self.cause_cls = cause_cls
         assert traceback_str is not None
+
+    def as_instanceof_cause(self):
+        """Returns copy that is an instance of the cause's Python class.
+
+        The returned exception will inherit from both RayTaskError and the
+        cause class.
+        """
+
+        if issubclass(RayTaskError, self.cause_cls):
+            return self  # already satisfied
+
+        class cls(self.cause_cls, RayTaskError):
+            def __init__(self, function_name, traceback_str, cause_cls, pid,
+                         host):
+                RayTaskError.__init__(self, function_name, traceback_str,
+                                      cause_cls, pid, host)
+
+        name = "RayTaskError({})".format(self.cause_cls.__name__)
+        cls.__name__ = name
+        cls.__qualname__ = name
+
+        return cls(self.function_name, self.traceback_str, self.cause_cls,
+                   self.pid, self.host)
+        cls.original = self
+        return cls
 
     def __str__(self):
         """Format a RayTaskError as a string."""
@@ -90,6 +121,15 @@ class RayletError(RayError):
         return "The Raylet died with this message: {}".format(self.client_exc)
 
 
+class ObjectStoreFullError(RayError):
+    """Indicates that the object store is full.
+
+    This is raised if the attempt to store the object fails
+    because the object store is full even after multiple retries.
+    """
+    pass
+
+
 class UnreconstructableError(RayError):
     """Indicates that an object is lost and cannot be reconstructed.
 
@@ -105,8 +145,14 @@ class UnreconstructableError(RayError):
         self.object_id = object_id
 
     def __str__(self):
-        return ("Object {} is lost (either evicted or explicitly deleted) and "
-                + "cannot be reconstructed.").format(self.object_id.hex())
+        return (
+            "Object {} is lost (either LRU evicted or deleted by user) and "
+            "cannot be reconstructed. Try increasing the object store "
+            "memory available with ray.init(object_store_memory=<bytes>) "
+            "or setting object store limits with "
+            "ray.remote(object_store_memory=<bytes>). See also: {}".format(
+                self.object_id.hex(),
+                "https://ray.readthedocs.io/en/latest/memory-management.html"))
 
 
 RAY_EXCEPTION_TYPES = [
@@ -114,5 +160,6 @@ RAY_EXCEPTION_TYPES = [
     RayTaskError,
     RayWorkerError,
     RayActorError,
+    ObjectStoreFullError,
     UnreconstructableError,
 ]
