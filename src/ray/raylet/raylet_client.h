@@ -84,14 +84,6 @@ class RayletClient {
   /// \return ray::Status.
   ray::Status SubmitTask(const ray::TaskSpecification &task_spec);
 
-  /// Get next task for this client. This will block until the scheduler assigns
-  /// a task to this worker. The caller takes ownership of the returned task
-  /// specification and must free it.
-  ///
-  /// \param task_spec The assigned task.
-  /// \return ray::Status.
-  ray::Status GetTask(std::unique_ptr<ray::TaskSpecification> *task_spec);
-
   /// Tell the raylet that the client has finished executing a task.
   ///
   /// \return ray::Status.
@@ -125,6 +117,15 @@ class RayletClient {
   ray::Status Wait(const std::vector<ObjectID> &object_ids, int num_returns,
                    int64_t timeout_milliseconds, bool wait_local,
                    const TaskID &current_task_id, WaitResultPair *result);
+
+  /// Wait for the given objects, asynchronously. The core worker is notified when
+  /// the wait completes.
+  ///
+  /// \param object_ids The objects to wait for.
+  /// \param tag Value that will be sent to the core worker via gRPC on completion.
+  /// \return ray::Status.
+  ray::Status WaitForDirectActorCallArgs(const std::vector<ObjectID> &object_ids,
+                                         int64_t tag);
 
   /// Push an error to the relevant driver.
   ///
@@ -175,6 +176,11 @@ class RayletClient {
   /// \return ray::Status
   ray::Status SetResource(const std::string &resource_name, const double capacity,
                           const ray::ClientID &client_Id);
+
+  /// Notifies the raylet of the object IDs currently in use on this worker.
+  /// \param object_ids The set of object IDs currently in use.
+  /// \return ray::Status
+  ray::Status ReportActiveObjectIDs(const std::unordered_set<ObjectID> &object_ids);
 
   Language GetLanguage() const { return language_; }
 
