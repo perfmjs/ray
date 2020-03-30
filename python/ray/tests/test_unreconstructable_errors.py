@@ -1,7 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import numpy as np
 import unittest
 
@@ -26,18 +22,8 @@ class TestUnreconstructableErrors(unittest.TestCase):
         self.assertRaises(ray.exceptions.UnreconstructableError,
                           lambda: ray.get(x_id))
 
-    def testLineageEvictedReconstructionFails(self):
-        @ray.remote
-        def f(data):
-            return 0
-
-        x_id = f.remote(None)
-        ray.get(x_id)
-        for _ in range(400):
-            ray.get([f.remote(np.zeros(10000)) for _ in range(50)])
-        self.assertRaises(ray.exceptions.UnreconstructableError,
-                          lambda: ray.get(x_id))
-
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    import pytest
+    import sys
+    sys.exit(pytest.main(["-v", __file__]))

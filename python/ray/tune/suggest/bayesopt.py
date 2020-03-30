@@ -1,7 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import copy
 import logging
 import pickle
@@ -19,7 +15,7 @@ class BayesOptSearch(SuggestionAlgorithm):
     """A wrapper around BayesOpt to provide trial suggestions.
 
     Requires BayesOpt to be installed. You can install BayesOpt with the
-    command: `pip install bayesian-optimization`.
+    command: ``pip install bayesian-optimization``.
 
     Parameters:
         space (dict): Continuous search space. Parameters will be sampled from
@@ -33,15 +29,25 @@ class BayesOptSearch(SuggestionAlgorithm):
             provide values for the keys `kind`, `kappa`, and `xi`.
         random_state (int): Used to initialize BayesOpt.
         verbose (int): Sets verbosity level for BayesOpt packages.
+        use_early_stopped_trials (bool): Whether to use early terminated
+            trial results in the optimization process.
 
-    Example:
-        >>> space = {
-        >>>     'width': (0, 20),
-        >>>     'height': (-100, 100),
-        >>> }
-        >>> algo = BayesOptSearch(
-        >>>     space, max_concurrent=4, metric="mean_loss", mode="min")
+    .. code-block:: python
+
+        from ray import tune
+        from ray.tune.suggest.bayesopt import BayesOptSearch
+
+        space = {
+            'width': (0, 20),
+            'height': (-100, 100),
+        }
+        algo = BayesOptSearch(
+            space, max_concurrent=4, metric="mean_loss", mode="min")
+
+        tune.run(my_func, algo=algo)
     """
+    # bayes_opt.BayesianOptimization: Optimization object
+    optimizer = None
 
     def __init__(self,
                  space,
@@ -82,9 +88,10 @@ class BayesOptSearch(SuggestionAlgorithm):
 
         self.utility = byo.UtilityFunction(**utility_kwargs)
 
-        super(BayesOptSearch, self).__init__(**kwargs)
+        super(BayesOptSearch, self).__init__(
+            metric=self._metric, mode=mode, **kwargs)
 
-    def _suggest(self, trial_id):
+    def suggest(self, trial_id):
         if self._num_live_trials() >= self._max_concurrent:
             return None
 
@@ -102,13 +109,17 @@ class BayesOptSearch(SuggestionAlgorithm):
                           result=None,
                           error=False,
                           early_terminated=False):
-        """Passes the result to BayesOpt unless early terminated or errored"""
+        """Notification for the completion of trial."""
         if result:
-            self.optimizer.register(
-                params=self._live_trial_mapping[trial_id],
-                target=self._metric_op * result[self._metric])
-
+            self._process_result(trial_id, result, early_terminated)
         del self._live_trial_mapping[trial_id]
+
+    def _process_result(self, trial_id, result, early_terminated=False):
+        if early_terminated and self._use_early_stopped is False:
+            return
+        self.optimizer.register(
+            params=self._live_trial_mapping[trial_id],
+            target=self._metric_op * result[self._metric])
 
     def _num_live_trials(self):
         return len(self._live_trial_mapping)

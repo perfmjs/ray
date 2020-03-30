@@ -1,3 +1,17 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "ray/core_worker/lib/java/org_ray_runtime_context_NativeWorkerContext.h"
 #include <jni.h>
 #include "ray/common/id.h"
@@ -13,11 +27,6 @@ inline ray::WorkerContext &GetWorkerContextFromPointer(jlong nativeCoreWorkerPoi
 extern "C" {
 #endif
 
-/*
- * Class:     org_ray_runtime_context_NativeWorkerContext
- * Method:    nativeGetCurrentTaskType
- * Signature: (J)I
- */
 JNIEXPORT jint JNICALL
 Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentTaskType(
     JNIEnv *env, jclass, jlong nativeCoreWorkerPointer) {
@@ -26,11 +35,6 @@ Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentTaskType(
   return static_cast<int>(task_spec->GetMessage().type());
 }
 
-/*
- * Class:     org_ray_runtime_context_NativeWorkerContext
- * Method:    nativeGetCurrentTaskId
- * Signature: (J)Ljava/nio/ByteBuffer;
- */
 JNIEXPORT jobject JNICALL
 Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentTaskId(
     JNIEnv *env, jclass, jlong nativeCoreWorkerPointer) {
@@ -39,11 +43,6 @@ Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentTaskId(
   return IdToJavaByteBuffer<ray::TaskID>(env, task_id);
 }
 
-/*
- * Class:     org_ray_runtime_context_NativeWorkerContext
- * Method:    nativeGetCurrentJobId
- * Signature: (J)Ljava/nio/ByteBuffer;
- */
 JNIEXPORT jobject JNICALL
 Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentJobId(
     JNIEnv *env, jclass, jlong nativeCoreWorkerPointer) {
@@ -52,11 +51,6 @@ Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentJobId(
   return IdToJavaByteBuffer<ray::JobID>(env, job_id);
 }
 
-/*
- * Class:     org_ray_runtime_context_NativeWorkerContext
- * Method:    nativeGetCurrentWorkerId
- * Signature: (J)Ljava/nio/ByteBuffer;
- */
 JNIEXPORT jobject JNICALL
 Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentWorkerId(
     JNIEnv *env, jclass, jlong nativeCoreWorkerPointer) {
@@ -65,11 +59,6 @@ Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentWorkerId(
   return IdToJavaByteBuffer<ray::WorkerID>(env, worker_id);
 }
 
-/*
- * Class:     org_ray_runtime_context_NativeWorkerContext
- * Method:    nativeGetCurrentActorId
- * Signature: (J)Ljava/nio/ByteBuffer;
- */
 JNIEXPORT jobject JNICALL
 Java_org_ray_runtime_context_NativeWorkerContext_nativeGetCurrentActorId(
     JNIEnv *env, jclass, jlong nativeCoreWorkerPointer) {

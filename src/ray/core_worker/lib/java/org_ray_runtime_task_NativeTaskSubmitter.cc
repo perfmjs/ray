@@ -1,25 +1,43 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "ray/core_worker/lib/java/org_ray_runtime_task_NativeTaskSubmitter.h"
 #include <jni.h>
 #include "ray/common/id.h"
 #include "ray/core_worker/common.h"
 #include "ray/core_worker/core_worker.h"
 #include "ray/core_worker/lib/java/jni_utils.h"
-#include "ray/core_worker/task_interface.h"
 
-inline ray::CoreWorkerTaskInterface &GetTaskInterfaceFromPointer(
-    jlong nativeCoreWorkerPointer) {
-  return reinterpret_cast<ray::CoreWorker *>(nativeCoreWorkerPointer)->Tasks();
+inline ray::CoreWorker &GetCoreWorker(jlong nativeCoreWorkerPointer) {
+  return *reinterpret_cast<ray::CoreWorker *>(nativeCoreWorkerPointer);
 }
 
 inline ray::RayFunction ToRayFunction(JNIEnv *env, jobject functionDescriptor) {
-  std::vector<std::string> function_descriptor;
-  JavaStringListToNativeStringVector(
-      env, env->CallObjectMethod(functionDescriptor, java_function_descriptor_to_list),
-      &function_descriptor);
+  std::vector<std::string> function_descriptor_list;
+  jobject list =
+      env->CallObjectMethod(functionDescriptor, java_function_descriptor_to_list);
+  RAY_CHECK_JAVA_EXCEPTION(env);
+  JavaStringListToNativeStringVector(env, list, &function_descriptor_list);
   jobject java_language =
       env->CallObjectMethod(functionDescriptor, java_function_descriptor_get_language);
-  int language = env->CallIntMethod(java_language, java_language_get_number);
-  ray::RayFunction ray_function{static_cast<::Language>(language), function_descriptor};
+  RAY_CHECK_JAVA_EXCEPTION(env);
+  auto language = static_cast<::Language>(
+      env->CallIntMethod(java_language, java_language_get_number));
+  RAY_CHECK_JAVA_EXCEPTION(env);
+  ray::FunctionDescriptor function_descriptor =
+      ray::FunctionDescriptorBuilder::FromVector(language, function_descriptor_list);
+  ray::RayFunction ray_function{language, function_descriptor};
   return ray_function;
 }
 
@@ -31,6 +49,7 @@ inline std::vector<ray::TaskArg> ToTaskArgs(JNIEnv *env, jobject args) {
         if (java_id) {
           auto java_id_bytes = static_cast<jbyteArray>(
               env->CallObjectMethod(java_id, java_base_id_get_bytes));
+          RAY_CHECK_JAVA_EXCEPTION(env);
           return ray::TaskArg::PassByReference(
               JavaByteArrayToId<ray::ObjectID>(env, java_id_bytes));
         }
@@ -46,20 +65,16 @@ inline std::vector<ray::TaskArg> ToTaskArgs(JNIEnv *env, jobject args) {
 inline std::unordered_map<std::string, double> ToResources(JNIEnv *env,
                                                            jobject java_resources) {
   std::unordered_map<std::string, double> resources;
-  if (java_resources) {
-    jobject entry_set = env->CallObjectMethod(java_resources, java_map_entry_set);
-    jobject iterator = env->CallObjectMethod(entry_set, java_set_iterator);
-    while (env->CallBooleanMethod(iterator, java_iterator_has_next)) {
-      jobject map_entry = env->CallObjectMethod(iterator, java_iterator_next);
-      std::string key = JavaStringToNativeString(
-          env, (jstring)env->CallObjectMethod(map_entry, java_map_entry_get_key));
-      double value = env->CallDoubleMethod(
-          env->CallObjectMethod(map_entry, java_map_entry_get_value),
-          java_double_double_value);
-      resources.emplace(key, value);
-    }
-  }
-  return resources;
+  return JavaMapToNativeMap<std::string, double>(
+      env, java_resources,
+      [](JNIEnv *env, jobject java_key) {
+        return JavaStringToNativeString(env, (jstring)java_key);
+      },
+      [](JNIEnv *env, jobject java_value) {
+        double value = env->CallDoubleMethod(java_value, java_double_double_value);
+        RAY_CHECK_JAVA_EXCEPTION(env);
+        return value;
+      });
 }
 
 inline ray::TaskOptions ToTaskOptions(JNIEnv *env, jint numReturns, jobject callOptions) {
@@ -77,14 +92,12 @@ inline ray::TaskOptions ToTaskOptions(JNIEnv *env, jint numReturns, jobject call
 inline ray::ActorCreationOptions ToActorCreationOptions(JNIEnv *env,
                                                         jobject actorCreationOptions) {
   uint64_t max_reconstructions = 0;
-  bool use_direct_call;
   std::unordered_map<std::string, double> resources;
   std::vector<std::string> dynamic_worker_options;
+  uint64_t max_concurrency = 1;
   if (actorCreationOptions) {
     max_reconstructions = static_cast<uint64_t>(env->GetIntField(
         actorCreationOptions, java_actor_creation_options_max_reconstructions));
-    use_direct_call = env->GetBooleanField(actorCreationOptions,
-                                           java_actor_creation_options_use_direct_call);
     jobject java_resources =
         env->GetObjectField(actorCreationOptions, java_base_task_options_resources);
     resources = ToResources(env, java_resources);
@@ -94,28 +107,25 @@ inline ray::ActorCreationOptions ToActorCreationOptions(JNIEnv *env,
       std::string jvm_options = JavaStringToNativeString(env, java_jvm_options);
       dynamic_worker_options.emplace_back(jvm_options);
     }
-  } else {
-    use_direct_call =
-        env->GetStaticBooleanField(java_actor_creation_options_class,
-                                   java_actor_creation_options_default_use_direct_call);
+    max_concurrency = static_cast<uint64_t>(env->GetIntField(
+        actorCreationOptions, java_actor_creation_options_max_concurrency));
   }
 
-  ray::ActorCreationOptions action_creation_options{
-      static_cast<uint64_t>(max_reconstructions), use_direct_call, resources, resources,
-      dynamic_worker_options};
-  return action_creation_options;
+  ray::ActorCreationOptions actor_creation_options{
+      static_cast<uint64_t>(max_reconstructions),
+      static_cast<int>(max_concurrency),
+      resources,
+      resources,
+      dynamic_worker_options,
+      /*is_detached=*/false,
+      /*is_asyncio=*/false};
+  return actor_creation_options;
 }
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/*
- * Class:     org_ray_runtime_task_NativeTaskSubmitter
- * Method:    nativeSubmitTask
- * Signature:
- * (JLorg/ray/runtime/functionmanager/FunctionDescriptor;Ljava/util/List;ILorg/ray/api/options/CallOptions;)Ljava/util/List;
- */
 JNIEXPORT jobject JNICALL Java_org_ray_runtime_task_NativeTaskSubmitter_nativeSubmitTask(
     JNIEnv *env, jclass p, jlong nativeCoreWorkerPointer, jobject functionDescriptor,
     jobject args, jint numReturns, jobject callOptions) {
@@ -124,55 +134,46 @@ JNIEXPORT jobject JNICALL Java_org_ray_runtime_task_NativeTaskSubmitter_nativeSu
   auto task_options = ToTaskOptions(env, numReturns, callOptions);
 
   std::vector<ObjectID> return_ids;
-  auto status = GetTaskInterfaceFromPointer(nativeCoreWorkerPointer)
-                    .SubmitTask(ray_function, task_args, task_options, &return_ids);
+  // TODO (kfstorm): Allow setting `max_retries` via `CallOptions`.
+  auto status = GetCoreWorker(nativeCoreWorkerPointer)
+                    .SubmitTask(ray_function, task_args, task_options, &return_ids,
+                                /*max_retries=*/0);
 
   THROW_EXCEPTION_AND_RETURN_IF_NOT_OK(env, status, nullptr);
 
   return NativeIdVectorToJavaByteArrayList(env, return_ids);
 }
 
-/*
- * Class:     org_ray_runtime_task_NativeTaskSubmitter
- * Method:    nativeCreateActor
- * Signature:
- * (JLorg/ray/runtime/functionmanager/FunctionDescriptor;Ljava/util/List;Lorg/ray/api/options/ActorCreationOptions;)J
- */
-JNIEXPORT jlong JNICALL Java_org_ray_runtime_task_NativeTaskSubmitter_nativeCreateActor(
+JNIEXPORT jbyteArray JNICALL
+Java_org_ray_runtime_task_NativeTaskSubmitter_nativeCreateActor(
     JNIEnv *env, jclass p, jlong nativeCoreWorkerPointer, jobject functionDescriptor,
     jobject args, jobject actorCreationOptions) {
   auto ray_function = ToRayFunction(env, functionDescriptor);
   auto task_args = ToTaskArgs(env, args);
   auto actor_creation_options = ToActorCreationOptions(env, actorCreationOptions);
 
-  std::unique_ptr<ray::ActorHandle> actor_handle;
-  auto status =
-      GetTaskInterfaceFromPointer(nativeCoreWorkerPointer)
-          .CreateActor(ray_function, task_args, actor_creation_options, &actor_handle);
+  ray::ActorID actor_id;
+  auto status = GetCoreWorker(nativeCoreWorkerPointer)
+                    .CreateActor(ray_function, task_args, actor_creation_options,
+                                 /*extension_data*/ "", &actor_id);
 
-  THROW_EXCEPTION_AND_RETURN_IF_NOT_OK(env, status, 0);
-  return reinterpret_cast<jlong>(actor_handle.release());
+  THROW_EXCEPTION_AND_RETURN_IF_NOT_OK(env, status, nullptr);
+  return IdToJavaByteArray<ray::ActorID>(env, actor_id);
 }
 
-/*
- * Class:     org_ray_runtime_task_NativeTaskSubmitter
- * Method:    nativeSubmitActorTask
- * Signature:
- * (JJLorg/ray/runtime/functionmanager/FunctionDescriptor;Ljava/util/List;ILorg/ray/api/options/CallOptions;)Ljava/util/List;
- */
 JNIEXPORT jobject JNICALL
 Java_org_ray_runtime_task_NativeTaskSubmitter_nativeSubmitActorTask(
-    JNIEnv *env, jclass p, jlong nativeCoreWorkerPointer, jlong nativeActorHandle,
+    JNIEnv *env, jclass p, jlong nativeCoreWorkerPointer, jbyteArray actorId,
     jobject functionDescriptor, jobject args, jint numReturns, jobject callOptions) {
-  auto &actor_handle = *(reinterpret_cast<ray::ActorHandle *>(nativeActorHandle));
+  auto actor_id = JavaByteArrayToId<ray::ActorID>(env, actorId);
   auto ray_function = ToRayFunction(env, functionDescriptor);
   auto task_args = ToTaskArgs(env, args);
   auto task_options = ToTaskOptions(env, numReturns, callOptions);
 
   std::vector<ObjectID> return_ids;
-  auto status = GetTaskInterfaceFromPointer(nativeCoreWorkerPointer)
-                    .SubmitActorTask(actor_handle, ray_function, task_args, task_options,
-                                     &return_ids);
+  auto status =
+      GetCoreWorker(nativeCoreWorkerPointer)
+          .SubmitActorTask(actor_id, ray_function, task_args, task_options, &return_ids);
 
   THROW_EXCEPTION_AND_RETURN_IF_NOT_OK(env, status, nullptr);
   return NativeIdVectorToJavaByteArrayList(env, return_ids);

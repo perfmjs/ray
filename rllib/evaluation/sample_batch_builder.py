@@ -1,14 +1,11 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import collections
 import logging
 import numpy as np
 
+from ray.util.debug import log_once
 from ray.rllib.policy.sample_batch import SampleBatch, MultiAgentBatch
 from ray.rllib.utils.annotations import PublicAPI, DeveloperAPI
-from ray.rllib.utils.debug import log_once, summarize
+from ray.rllib.utils.debug import summarize
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +18,7 @@ def to_float_array(v):
 
 
 @PublicAPI
-class SampleBatchBuilder(object):
+class SampleBatchBuilder:
     """Util to build a SampleBatch incrementally.
 
     For efficiency, SampleBatches hold values in column form (as arrays).
@@ -66,7 +63,7 @@ class SampleBatchBuilder(object):
 
 
 @DeveloperAPI
-class MultiAgentSampleBatchBuilder(object):
+class MultiAgentSampleBatchBuilder:
     """Util to build SampleBatches for each policy in a multi-agent env.
 
     Input data is per-agent, while output data is per-policy. There is an M:N
@@ -98,9 +95,9 @@ class MultiAgentSampleBatchBuilder(object):
     def total(self):
         """Returns summed number of steps across all agent buffers."""
 
-        return sum(p.count for p in self.policy_builders.values())
+        return sum(a.count for a in self.agent_builders.values())
 
-    def has_pending_data(self):
+    def has_pending_agent_data(self):
         """Returns whether there is pending unprocessed data."""
 
         return len(self.agent_builders) > 0
@@ -154,6 +151,9 @@ class MultiAgentSampleBatchBuilder(object):
                     "from a single trajectory.", pre_batch)
             post_batches[agent_id] = policy.postprocess_trajectory(
                 pre_batch, other_batches, episode)
+            # Call the Policy's Exploration's postprocess method.
+            policy.exploration.postprocess_trajectory(
+                policy, post_batches[agent_id], getattr(policy, "_sess", None))
 
         if log_once("after_post"):
             logger.info(

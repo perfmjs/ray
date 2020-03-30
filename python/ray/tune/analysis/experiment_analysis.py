@@ -1,7 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import json
 import logging
 import os
@@ -12,13 +8,19 @@ except ImportError:
     pd = None
 
 from ray.tune.error import TuneError
-from ray.tune.result import EXPR_PROGRESS_FILE, EXPR_PARAM_FILE, CONFIG_PREFIX
+from ray.tune.result import EXPR_PROGRESS_FILE, EXPR_PARAM_FILE,\
+    CONFIG_PREFIX, TRAINING_ITERATION
+from ray.tune.trial import Trial
+from ray.tune.trainable import TrainableUtil
 
 logger = logging.getLogger(__name__)
 
 
-class Analysis(object):
-    """Analyze all results from a directory of experiments."""
+class Analysis:
+    """Analyze all results from a directory of experiments.
+
+    To use this class, the experiment must be executed with the JsonLogger.
+    """
 
     def __init__(self, experiment_dir):
         experiment_dir = os.path.expanduser(experiment_dir)
@@ -44,6 +46,8 @@ class Analysis(object):
                 If None, uses last result.
             mode (str): One of [min, max].
 
+        Returns:
+            pd.DataFrame: Constructed from a result dict of each trial.
         """
         rows = self._retrieve_rows(metric=metric, mode=mode)
         all_configs = self.get_all_configs(prefix=True)
@@ -59,7 +63,6 @@ class Analysis(object):
         Args:
             metric (str): Key for trial info to order on.
             mode (str): One of [min, max].
-
         """
         rows = self._retrieve_rows(metric=metric, mode=mode)
         all_configs = self.get_all_configs()
@@ -73,7 +76,6 @@ class Analysis(object):
         Args:
             metric (str): Key for trial info to order on.
             mode (str): One of [min, max].
-
         """
         df = self.dataframe(metric=metric, mode=mode)
         if mode == "max":
@@ -98,9 +100,12 @@ class Analysis(object):
     def get_all_configs(self, prefix=False):
         """Returns a list of all configurations.
 
-        Parameters:
+        Args:
             prefix (bool): If True, flattens the config dict
                 and prepends `config/`.
+
+        Returns:
+            List[dict]: List of all configurations of trials,
         """
         fail_count = 0
         for path in self._get_trial_paths():
@@ -118,6 +123,33 @@ class Analysis(object):
             logger.warning(
                 "Couldn't read config from {} paths".format(fail_count))
         return self._configs
+
+    def get_trial_checkpoints_paths(self, trial, metric=TRAINING_ITERATION):
+        """Gets paths and metrics of all persistent checkpoints of a trial.
+
+        Args:
+            trial (Trial): The log directory of a trial, or a trial instance.
+            metric (str): key for trial info to return, e.g. "mean_accuracy".
+                "training_iteration" is used by default.
+
+        Returns:
+            List of [path, metric] for all persistent checkpoints of the trial.
+        """
+        if isinstance(trial, str):
+            trial_dir = os.path.expanduser(trial)
+            # Get checkpoints from logdir.
+            chkpt_df = TrainableUtil.get_checkpoints_paths(trial_dir)
+
+            # Join with trial dataframe to get metrics.
+            trial_df = self.trial_dataframes[trial_dir]
+            path_metric_df = chkpt_df.merge(
+                trial_df, on="training_iteration", how="inner")
+            return path_metric_df[["chkpt_path", metric]].values.tolist()
+        elif isinstance(trial, Trial):
+            checkpoints = trial.checkpoint_manager.best_checkpoints()
+            return [[c.value, c.result[metric]] for c in checkpoints]
+        else:
+            raise ValueError("trial should be a string or a Trial instance.")
 
     def _retrieve_rows(self, metric=None, mode=None):
         assert mode is None or mode in ["max", "min"]
@@ -153,10 +185,14 @@ class Analysis(object):
 class ExperimentAnalysis(Analysis):
     """Analyze results from a Tune experiment.
 
+    To use this class, the experiment must be executed with the JsonLogger.
+
     Parameters:
         experiment_checkpoint_path (str): Path to a json file
             representing an experiment state. Corresponds to
             Experiment.local_dir/Experiment.name/experiment_state.json
+        trials (list|None): List of trials that can be accessed via
+            `analysis.trials`.
 
     Example:
         >>> tune.run(my_trainable, name="my_exp", local_dir="~/tune_results")
@@ -165,13 +201,6 @@ class ExperimentAnalysis(Analysis):
     """
 
     def __init__(self, experiment_checkpoint_path, trials=None):
-        """Initializer.
-
-        Args:
-            experiment_path (str): Path to where experiment is located.
-            trials (list|None): List of trials that can be accessed via
-                `analysis.trials`.
-        """
         with open(experiment_checkpoint_path) as f:
             _experiment_state = json.load(f)
             self._experiment_state = _experiment_state
@@ -182,6 +211,89 @@ class ExperimentAnalysis(Analysis):
         self.trials = trials
         super(ExperimentAnalysis, self).__init__(
             os.path.dirname(experiment_checkpoint_path))
+
+    def get_best_trial(self, metric, mode="max", scope="all"):
+        """Retrieve the best trial object.
+
+        Compares all trials' scores on `metric`.
+
+        Args:
+            metric (str): Key for trial info to order on.
+            mode (str): One of [min, max].
+            scope (str): One of [all, last]. If `scope=last`, only look at
+                each trial's final step for `metric`, and compare across
+                trials based on `mode=[min,max]`. If `scope=all`, find each
+                trial's min/max score for `metric` based on `mode`, and
+                compare trials based on `mode=[min,max]`.
+        """
+        if mode not in ["max", "min"]:
+            raise ValueError(
+                "ExperimentAnalysis: attempting to get best trial for "
+                "metric {} for mode {} not in [\"max\", \"min\"]".format(
+                    metric, mode))
+        if scope not in ["all", "last"]:
+            raise ValueError(
+                "ExperimentAnalysis: attempting to get best trial for "
+                "metric {} for scope {} not in [\"all\", \"last\"]".format(
+                    metric, scope))
+        best_trial = None
+        best_metric_score = None
+        for trial in self.trials:
+            if metric not in trial.metric_analysis:
+                continue
+
+            if scope == "last":
+                metric_score = trial.metric_analysis[metric]["last"]
+            else:
+                metric_score = trial.metric_analysis[metric][mode]
+
+            if best_metric_score is None:
+                best_metric_score = metric_score
+                best_trial = trial
+                continue
+
+            if (mode == "max") and (best_metric_score < metric_score):
+                best_metric_score = metric_score
+                best_trial = trial
+            elif (mode == "min") and (best_metric_score > metric_score):
+                best_metric_score = metric_score
+                best_trial = trial
+
+        return best_trial
+
+    def get_best_config(self, metric, mode="max", scope="all"):
+        """Retrieve the best config corresponding to the trial.
+
+        Compares all trials' scores on `metric`.
+
+        Args:
+            metric (str): Key for trial info to order on.
+            mode (str): One of [min, max].
+            scope (str): One of [all, last]. If `scope=last`, only look at
+                each trial's final step for `metric`, and compare across
+                trials based on `mode=[min,max]`. If `scope=all`, find each
+                trial's min/max score for `metric` based on `mode`, and
+                compare trials based on `mode=[min,max]`.
+        """
+        best_trial = self.get_best_trial(metric, mode, scope)
+        return best_trial.config if best_trial else None
+
+    def get_best_logdir(self, metric, mode="max", scope="all"):
+        """Retrieve the logdir corresponding to the best trial.
+
+        Compares all trials' scores on `metric`.
+
+        Args:
+            metric (str): Key for trial info to order on.
+            mode (str): One of [min, max].
+            scope (str): One of [all, last]. If `scope=last`, only look at
+                each trial's final step for `metric`, and compare across
+                trials based on `mode=[min,max]`. If `scope=all`, find each
+                trial's min/max score for `metric` based on `mode`, and
+                compare trials based on `mode=[min,max]`.
+        """
+        best_trial = self.get_best_trial(metric, mode, scope)
+        return best_trial.logdir if best_trial else None
 
     def stats(self):
         """Returns a dictionary of the statistics of the experiment."""

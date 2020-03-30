@@ -1,3 +1,17 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #ifndef RAY_CORE_WORKER_COMMON_H
 #define RAY_CORE_WORKER_COMMON_H
 
@@ -10,6 +24,7 @@
 #include "ray/util/util.h"
 
 namespace ray {
+
 using WorkerType = rpc::WorkerType;
 
 // Return a string representation of the worker type.
@@ -22,18 +37,18 @@ std::string LanguageString(Language language);
 class RayFunction {
  public:
   RayFunction() {}
-  RayFunction(Language language, const std::vector<std::string> &function_descriptor)
+  RayFunction(Language language, const ray::FunctionDescriptor &function_descriptor)
       : language_(language), function_descriptor_(function_descriptor) {}
 
   Language GetLanguage() const { return language_; }
 
-  const std::vector<std::string> &GetFunctionDescriptor() const {
+  const ray::FunctionDescriptor &GetFunctionDescriptor() const {
     return function_descriptor_;
   }
 
  private:
   Language language_;
-  std::vector<std::string> function_descriptor_;
+  ray::FunctionDescriptor function_descriptor_;
 };
 
 /// Argument of a task.
@@ -96,24 +111,24 @@ struct TaskOptions {
 /// Options for actor creation tasks.
 struct ActorCreationOptions {
   ActorCreationOptions() {}
-  ActorCreationOptions(uint64_t max_reconstructions, bool is_direct_call,
+  ActorCreationOptions(uint64_t max_reconstructions, int max_concurrency,
                        const std::unordered_map<std::string, double> &resources,
                        const std::unordered_map<std::string, double> &placement_resources,
                        const std::vector<std::string> &dynamic_worker_options,
-                       bool is_detached)
+                       bool is_detached, bool is_asyncio)
       : max_reconstructions(max_reconstructions),
-        is_direct_call(is_direct_call),
+        max_concurrency(max_concurrency),
         resources(resources),
         placement_resources(placement_resources),
         dynamic_worker_options(dynamic_worker_options),
-        is_detached(is_detached){};
+        is_detached(is_detached),
+        is_asyncio(is_asyncio){};
 
   /// Maximum number of times that the actor should be reconstructed when it dies
   /// unexpectedly. It must be non-negative. If it's 0, the actor won't be reconstructed.
   const uint64_t max_reconstructions = 0;
-  /// Whether to use direct actor call. If this is set to true, callers will submit
-  /// tasks directly to the created actor without going through raylet.
-  const bool is_direct_call = false;
+  /// The max number of concurrent tasks to run on this direct call actor.
+  const int max_concurrency = 1;
   /// Resources required by the whole lifetime of this actor.
   const std::unordered_map<std::string, double> resources;
   /// Resources required to place this actor.
@@ -124,6 +139,8 @@ struct ActorCreationOptions {
   /// Whether to keep the actor persistent after driver exit. If true, this will set
   /// the worker to not be destroyed after the driver shutdown.
   const bool is_detached = false;
+  /// Whether to use async mode of direct actor call.
+  const bool is_asyncio = false;
 };
 
 }  // namespace ray

@@ -2,8 +2,12 @@
 /bazel-*
 /python/ray/core
 /python/ray/pyarrow_files/
+/python/ray/pickle5_files/
+/python/ray/thirdparty_files/
+/python/ray/jars/
 /python/build
 /python/dist
+/python/python-driver-*
 /thirdparty/pkg/
 /build/java
 
@@ -54,6 +58,7 @@ python/.eggs
 
 # Fortran module files
 *.mod
+!deploy/ray-operator/go.mod
 
 # Compiled Static libraries
 *.lai
@@ -128,7 +133,9 @@ scripts/nodes.txt
 
 # Pytest Cache
 **/.pytest_cache
+**/.cache
 .benchmarks
+python-driver-*
 
 # Vscode
 .vscode/
@@ -143,6 +150,17 @@ java/**/.classpath
 java/**/.project
 java/runtime/native_dependencies/
 
+# streaming/python
+streaming/python/generated/
+streaming/java/streaming-runtime/src/main/java/org/ray/streaming/runtime/generated/
+streaming/build/java
+.clwb
+streaming/**/.settings
+streaming/java/**/target
+streaming/java/**/.classpath
+streaming/java/**/.project
+streaming/java/**/*.log
+
 # python virtual env
 venv
 
@@ -152,3 +170,6 @@ venv
 
 # tools
 tools/prometheus*
+
+# ray project files
+project-id

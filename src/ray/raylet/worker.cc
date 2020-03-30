@@ -1,22 +1,35 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "worker.h"
 
 #include <boost/bind.hpp>
 
 #include "ray/raylet/format/node_manager_generated.h"
 #include "ray/raylet/raylet.h"
-#include "src/ray/protobuf/direct_actor.grpc.pb.h"
-#include "src/ray/protobuf/direct_actor.pb.h"
+#include "src/ray/protobuf/core_worker.grpc.pb.h"
+#include "src/ray/protobuf/core_worker.pb.h"
 
 namespace ray {
 
 namespace raylet {
 
 /// A constructor responsible for initializing the state of a worker.
-Worker::Worker(const WorkerID &worker_id, pid_t pid, const Language &language, int port,
+Worker::Worker(const WorkerID &worker_id, const Language &language, int port,
                std::shared_ptr<LocalClientConnection> connection,
                rpc::ClientCallManager &client_call_manager)
     : worker_id_(worker_id),
-      pid_(pid),
       language_(language),
       port_(port),
       connection_(connection),
@@ -25,10 +38,11 @@ Worker::Worker(const WorkerID &worker_id, pid_t pid, const Language &language, i
       client_call_manager_(client_call_manager),
       is_detached_actor_(false) {
   if (port_ > 0) {
-    rpc_client_ = std::unique_ptr<rpc::WorkerTaskClient>(
-        new rpc::WorkerTaskClient("127.0.0.1", port_, client_call_manager_));
-    direct_rpc_client_ = std::unique_ptr<rpc::DirectActorClient>(
-        new rpc::DirectActorClient("127.0.0.1", port_, client_call_manager_));
+    rpc::Address addr;
+    addr.set_ip_address("127.0.0.1");
+    addr.set_port(port_);
+    rpc_client_ = std::unique_ptr<rpc::CoreWorkerClient>(
+        new rpc::CoreWorkerClient(addr, client_call_manager_));
   }
 }
 
@@ -44,7 +58,12 @@ bool Worker::IsBlocked() const { return blocked_; }
 
 WorkerID Worker::WorkerId() const { return worker_id_; }
 
-pid_t Worker::Pid() const { return pid_; }
+Process Worker::GetProcess() const { return proc_; }
+
+void Worker::SetProcess(Process proc) {
+  RAY_CHECK(proc_.IsNull());  // this procedure should not be called multiple times
+  proc_ = std::move(proc);
+}
 
 Language Worker::GetLanguage() const { return language_; }
 
@@ -89,6 +108,9 @@ const std::shared_ptr<LocalClientConnection> Worker::Connection() const {
   return connection_;
 }
 
+void Worker::SetOwnerAddress(const rpc::Address &address) { owner_address_ = address; }
+const rpc::Address &Worker::GetOwnerAddress() const { return owner_address_; }
+
 const ResourceIdSet &Worker::GetLifetimeResourceIds() const {
   return lifetime_resource_ids_;
 }
@@ -122,26 +144,18 @@ void Worker::AcquireTaskCpuResources(const ResourceIdSet &cpu_resources) {
   task_resource_ids_.Release(cpu_resources);
 }
 
-const std::unordered_set<ObjectID> &Worker::GetActiveObjectIds() const {
-  return active_object_ids_;
-}
-
-void Worker::SetActiveObjectIds(const std::unordered_set<ObjectID> &&object_ids) {
-  active_object_ids_ = object_ids;
-}
-
-void Worker::AssignTask(const Task &task, const ResourceIdSet &resource_id_set,
-                        const std::function<void(Status)> finish_assign_callback) {
+Status Worker::AssignTask(const Task &task, const ResourceIdSet &resource_id_set) {
   RAY_CHECK(port_ > 0);
   rpc::AssignTaskRequest request;
+  request.set_intended_worker_id(worker_id_.Binary());
   request.mutable_task()->mutable_task_spec()->CopyFrom(
       task.GetTaskSpecification().GetMessage());
   request.mutable_task()->mutable_task_execution_spec()->CopyFrom(
       task.GetTaskExecutionSpec().GetMessage());
   request.set_resource_ids(resource_id_set.Serialize());
 
-  auto status = rpc_client_->AssignTask(request, [](Status status,
-                                                    const rpc::AssignTaskReply &reply) {
+  return rpc_client_->AssignTask(request, [](Status status,
+                                             const rpc::AssignTaskReply &reply) {
     if (!status.ok()) {
       RAY_LOG(DEBUG) << "Worker failed to finish executing task: " << status.ToString();
     }
@@ -149,21 +163,14 @@ void Worker::AssignTask(const Task &task, const ResourceIdSet &resource_id_set,
     // and assigning new task will be done when raylet receives
     // `TaskDone` message.
   });
-  finish_assign_callback(status);
-  if (!status.ok()) {
-    RAY_LOG(ERROR) << "Failed to assign task " << task.GetTaskSpecification().TaskId()
-                   << " to worker " << worker_id_;
-  } else {
-    RAY_LOG(DEBUG) << "Assigned task " << task.GetTaskSpecification().TaskId()
-                   << " to worker " << worker_id_;
-  }
 }
 
 void Worker::DirectActorCallArgWaitComplete(int64_t tag) {
   RAY_CHECK(port_ > 0);
   rpc::DirectActorCallArgWaitCompleteRequest request;
   request.set_tag(tag);
-  auto status = direct_rpc_client_->DirectActorCallArgWaitComplete(
+  request.set_intended_worker_id(worker_id_.Binary());
+  auto status = rpc_client_->DirectActorCallArgWaitComplete(
       request, [](Status status, const rpc::DirectActorCallArgWaitCompleteReply &reply) {
         if (!status.ok()) {
           RAY_LOG(ERROR) << "Failed to send wait complete: " << status.ToString();

@@ -1,43 +1,43 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import itertools
 import copy
 
 from ray.tune.error import TuneError
-from ray.tune.trial import Trial
-from ray.tune.util import merge_dicts, flatten_dict
 from ray.tune.experiment import convert_to_experiment_list
 from ray.tune.config_parser import make_parser, create_trial_from_spec
 from ray.tune.suggest.search import SearchAlgorithm
 from ray.tune.suggest.variant_generator import format_vars, resolve_nested_dict
+from ray.tune.trial import Trial
+from ray.tune.utils import merge_dicts, flatten_dict
 
 
 class SuggestionAlgorithm(SearchAlgorithm):
     """Abstract class for suggestion-based algorithms.
 
     Custom search algorithms can extend this class easily by overriding the
-    `_suggest` method provide generated parameters for the trials.
+    `suggest` method provide generated parameters for the trials.
 
     To track suggestions and their corresponding evaluations, the method
-    `_suggest` will be passed a trial_id, which will be used in
+    `suggest` will be passed a trial_id, which will be used in
     subsequent notifications.
 
-    Example:
-        >>> suggester = SuggestionAlgorithm()
-        >>> suggester.add_configurations({ ... })
-        >>> new_parameters = suggester._suggest()
-        >>> suggester.on_trial_complete(trial_id, result)
-        >>> better_parameters = suggester._suggest()
+    .. code-block:: python
+
+        suggester = SuggestionAlgorithm()
+        suggester.add_configurations({ ... })
+        new_parameters = suggester.suggest()
+        suggester.on_trial_complete(trial_id, result)
+        better_parameters = suggester.suggest()
     """
 
-    def __init__(self):
-        """Constructs a generator given experiment specifications.
-        """
+    def __init__(self, metric=None, mode="max", use_early_stopped_trials=True):
+        """Constructs a generator given experiment specifications."""
         self._parser = make_parser()
         self._trial_generator = []
         self._counter = 0
+        self._metric = metric
+        assert mode in ["min", "max"]
+        self._mode = mode
+        self._use_early_stopped = use_early_stopped_trials
         self._finished = False
 
     def add_configurations(self, experiments):
@@ -50,7 +50,9 @@ class SuggestionAlgorithm(SearchAlgorithm):
         for experiment in experiment_list:
             self._trial_generator = itertools.chain(
                 self._trial_generator,
-                self._generate_trials(experiment.spec, experiment.name))
+                self._generate_trials(
+                    experiment.spec.get("num_samples", 1), experiment.spec,
+                    experiment.name))
 
     def next_trials(self):
         """Provides a batch of Trial objects to be queued into the TrialRunner.
@@ -67,23 +69,23 @@ class SuggestionAlgorithm(SearchAlgorithm):
                 return trials
             trials += [trial]
 
-        self._finished = True
+        self.set_finished()
         return trials
 
-    def _generate_trials(self, experiment_spec, output_path=""):
-        """Generates trials with configurations from `_suggest`.
+    def _generate_trials(self, num_samples, experiment_spec, output_path=""):
+        """Generates trials with configurations from `suggest`.
 
-        Creates a trial_id that is passed into `_suggest`.
+        Creates a trial_id that is passed into `suggest`.
 
         Yields:
             Trial objects constructed according to `spec`
         """
         if "run" not in experiment_spec:
             raise TuneError("Must specify `run` in {}".format(experiment_spec))
-        for _ in range(experiment_spec.get("num_samples", 1)):
+        for _ in range(num_samples):
             trial_id = Trial.generate_id()
             while True:
-                suggested_config = self._suggest(trial_id)
+                suggested_config = self.suggest(trial_id)
                 if suggested_config is None:
                     yield None
                 else:
@@ -103,10 +105,7 @@ class SuggestionAlgorithm(SearchAlgorithm):
                 experiment_tag=tag,
                 trial_id=trial_id)
 
-    def is_finished(self):
-        return self._finished
-
-    def _suggest(self, trial_id):
+    def suggest(self, trial_id):
         """Queries the algorithm to retrieve the next set of parameters.
 
         Arguments:
@@ -120,11 +119,11 @@ class SuggestionAlgorithm(SearchAlgorithm):
         Example:
             >>> suggester = SuggestionAlgorithm(max_concurrent=1)
             >>> suggester.add_configurations({ ... })
-            >>> parameters_1 = suggester._suggest()
-            >>> parameters_2 = suggester._suggest()
+            >>> parameters_1 = suggester.suggest()
+            >>> parameters_2 = suggester.suggest()
             >>> parameters_2 is None
             >>> suggester.on_trial_complete(trial_id, result)
-            >>> parameters_2 = suggester._suggest()
+            >>> parameters_2 = suggester.suggest()
             >>> parameters_2 is not None
         """
         raise NotImplementedError
@@ -135,17 +134,28 @@ class SuggestionAlgorithm(SearchAlgorithm):
     def restore(self, checkpoint_dir):
         raise NotImplementedError
 
+    @property
+    def metric(self):
+        """The training result objective value attribute."""
+        return self._metric
+
+    @property
+    def mode(self):
+        """Specifies if minimizing or maximizing the metric."""
+        return self._mode
+
 
 class _MockSuggestionAlgorithm(SuggestionAlgorithm):
     def __init__(self, max_concurrent=2, **kwargs):
         self._max_concurrent = max_concurrent
         self.live_trials = {}
         self.counter = {"result": 0, "complete": 0}
+        self.final_results = []
         self.stall = False
         self.results = []
         super(_MockSuggestionAlgorithm, self).__init__(**kwargs)
 
-    def _suggest(self, trial_id):
+    def suggest(self, trial_id):
         if len(self.live_trials) < self._max_concurrent and not self.stall:
             self.live_trials[trial_id] = 1
             return {"test_variable": 2}
@@ -155,6 +165,16 @@ class _MockSuggestionAlgorithm(SuggestionAlgorithm):
         self.counter["result"] += 1
         self.results += [result]
 
-    def on_trial_complete(self, trial_id, **kwargs):
+    def on_trial_complete(self,
+                          trial_id,
+                          result=None,
+                          error=False,
+                          early_terminated=False):
         self.counter["complete"] += 1
+        if result:
+            self._process_result(result, early_terminated)
         del self.live_trials[trial_id]
+
+    def _process_result(self, result, early_terminated):
+        if early_terminated and self._use_early_stopped:
+            self.final_results += [result]

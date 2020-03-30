@@ -2,10 +2,6 @@
 # https://github.com/openai/evolution-strategies-starter and from
 # https://github.com/modestyachts/ARS
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from collections import namedtuple
 import logging
 import numpy as np
@@ -55,7 +51,7 @@ def create_shared_noise(count):
     return noise
 
 
-class SharedNoiseTable(object):
+class SharedNoiseTable:
     def __init__(self, noise):
         self.noise = noise
         assert self.noise.dtype == np.float32
@@ -72,7 +68,7 @@ class SharedNoiseTable(object):
 
 
 @ray.remote
-class Worker(object):
+class Worker:
     def __init__(self, config, env_creator, noise, min_task_runtime=0.2):
         self.min_task_runtime = min_task_runtime
         self.config = config
@@ -104,13 +100,13 @@ class Worker(object):
         return return_filters
 
     def rollout(self, timestep_limit, add_noise=False):
-        rollout_rewards, rollout_length = policies.rollout(
+        rollout_rewards, rollout_fragment_length = policies.rollout(
             self.policy,
             self.env,
             timestep_limit=timestep_limit,
             add_noise=add_noise,
             offset=self.config["offset"])
-        return rollout_rewards, rollout_length
+        return rollout_rewards, rollout_fragment_length
 
     def do_rollouts(self, params, timestep_limit=None):
         # Set the network weights.
@@ -166,6 +162,11 @@ class ARSTrainer(Trainer):
 
     @override(Trainer)
     def _init(self, config, env_creator):
+        # PyTorch check.
+        if config["use_pytorch"]:
+            raise ValueError(
+                "ARS does not support PyTorch yet! Use tf instead.")
+
         env = env_creator(config["env_config"])
         from ray.rllib import models
         preprocessor = models.ModelCatalog.get_preprocessor(env)
@@ -299,7 +300,7 @@ class ARSTrainer(Trainer):
             w.__ray_terminate__.remote()
 
     @override(Trainer)
-    def compute_action(self, observation):
+    def compute_action(self, observation, *args, **kwargs):
         return self.policy.compute(observation, update=True)[0]
 
     def _collect_results(self, theta_id, min_episodes):

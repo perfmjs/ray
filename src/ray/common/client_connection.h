@@ -1,3 +1,17 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #ifndef RAY_COMMON_CLIENT_CONNECTION_H
 #define RAY_COMMON_CLIENT_CONNECTION_H
 
@@ -12,15 +26,6 @@
 #include "ray/common/status.h"
 
 namespace ray {
-
-/// Connect a TCP socket.
-///
-/// \param socket The socket to connect.
-/// \param ip_address The IP address to connect to.
-/// \param port The port to connect to.
-/// \return Status.
-ray::Status TcpConnect(boost::asio::ip::tcp::socket &socket,
-                       const std::string &ip_address, int port);
 
 /// \typename ServerConnection
 ///
@@ -213,10 +218,20 @@ class ClientConnection : public ServerConnection<T> {
   std::vector<uint8_t> read_message_;
 };
 
-using LocalServerConnection = ServerConnection<boost::asio::local::stream_protocol>;
-using TcpServerConnection = ServerConnection<boost::asio::ip::tcp>;
-using LocalClientConnection = ClientConnection<boost::asio::local::stream_protocol>;
-using TcpClientConnection = ClientConnection<boost::asio::ip::tcp>;
+typedef
+#if defined(BOOST_ASIO_HAS_LOCAL_SOCKETS)
+    boost::asio::local::stream_protocol
+#else
+    boost::asio::ip::tcp
+#endif
+        local_stream_protocol;
+
+typedef boost::asio::ip::tcp remote_stream_protocol;
+
+using LocalServerConnection = ServerConnection<local_stream_protocol>;
+using TcpServerConnection = ServerConnection<remote_stream_protocol>;
+using LocalClientConnection = ClientConnection<local_stream_protocol>;
+using TcpClientConnection = ClientConnection<remote_stream_protocol>;
 
 }  // namespace ray
 

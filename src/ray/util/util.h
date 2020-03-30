@@ -1,16 +1,28 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #ifndef RAY_UTIL_UTIL_H
 #define RAY_UTIL_UTIL_H
 
-#include <boost/system/error_code.hpp>
 #include <chrono>
 #include <iterator>
 #include <mutex>
 #include <random>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
-
-#include "ray/common/status.h"
 
 /// Return the number of milliseconds since the steady clock epoch. NOTE: The
 /// returned timestamp may be used for accurately measuring intervals but has
@@ -28,13 +40,11 @@ inline int64_t current_time_ms() {
   return ms_since_epoch.count();
 }
 
-inline ray::Status boost_to_ray_status(const boost::system::error_code &error) {
-  switch (error.value()) {
-  case boost::system::errc::success:
-    return ray::Status::OK();
-  default:
-    return ray::Status::IOError(strerror(error.value()));
-  }
+inline int64_t current_sys_time_ms() {
+  std::chrono::milliseconds ms_since_epoch =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch());
+  return ms_since_epoch.count();
 }
 
 /// A helper function to split a string by whitespaces.
@@ -95,6 +105,13 @@ void FillRandom(T *data) {
   RAY_CHECK(data != nullptr);
   auto randomly_seeded_mersenne_twister = []() {
     auto seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    // To increase the entropy, mix in a number of time samples instead of a single one.
+    // This avoids the possibility of duplicate seeds for many workers that start in
+    // close succession.
+    for (int i = 0; i < 128; i++) {
+      std::this_thread::sleep_for(std::chrono::microseconds(10));
+      seed += std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    }
     std::mt19937 seeded_engine(seed);
     return seeded_engine;
   };

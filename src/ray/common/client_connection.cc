@@ -1,3 +1,17 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "client_connection.h"
 
 #include <stdio.h>
@@ -8,28 +22,6 @@
 #include "ray/util/util.h"
 
 namespace ray {
-
-ray::Status TcpConnect(boost::asio::ip::tcp::socket &socket,
-                       const std::string &ip_address_string, int port) {
-  // Disable Nagle's algorithm, which caused transfer delays of 10s of ms in
-  // certain cases.
-  socket.open(boost::asio::ip::tcp::v4());
-  boost::asio::ip::tcp::no_delay option(true);
-  socket.set_option(option);
-
-  boost::asio::ip::address ip_address =
-      boost::asio::ip::address::from_string(ip_address_string);
-  boost::asio::ip::tcp::endpoint endpoint(ip_address, port);
-  boost::system::error_code error;
-  socket.connect(endpoint, error);
-  const auto status = boost_to_ray_status(error);
-  if (!status.ok()) {
-    // Close the socket if the connect failed.
-    boost::system::error_code close_error;
-    socket.close(close_error);
-  }
-  return status;
-}
 
 template <class T>
 std::shared_ptr<ServerConnection<T>> ServerConnection<T>::Create(
@@ -317,9 +309,9 @@ std::string ClientConnection<T>::RemoteEndpointInfo() {
 }
 
 template <>
-std::string ClientConnection<boost::asio::ip::tcp>::RemoteEndpointInfo() {
+std::string ClientConnection<remote_stream_protocol>::RemoteEndpointInfo() {
   const auto &remote_endpoint =
-      ServerConnection<boost::asio::ip::tcp>::socket_.remote_endpoint();
+      ServerConnection<remote_stream_protocol>::socket_.remote_endpoint();
   return remote_endpoint.address().to_string() + ":" +
          std::to_string(remote_endpoint.port());
 }
@@ -361,9 +353,12 @@ std::string ServerConnection<T>::DebugString() const {
   return result.str();
 }
 
-template class ServerConnection<boost::asio::local::stream_protocol>;
-template class ServerConnection<boost::asio::ip::tcp>;
-template class ClientConnection<boost::asio::local::stream_protocol>;
-template class ClientConnection<boost::asio::ip::tcp>;
+#if defined(BOOST_ASIO_HAS_LOCAL_SOCKETS)
+// We compile conditionally to prevent duplicate explicit instantiation error
+template class ServerConnection<local_stream_protocol>;
+template class ClientConnection<local_stream_protocol>;
+#endif
+template class ServerConnection<remote_stream_protocol>;
+template class ClientConnection<remote_stream_protocol>;
 
 }  // namespace ray

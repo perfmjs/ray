@@ -1,3 +1,16 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "ray/core_worker/transport/raylet_transport.h"
 #include "ray/common/common_protocol.h"
@@ -6,38 +19,28 @@
 namespace ray {
 
 CoreWorkerRayletTaskReceiver::CoreWorkerRayletTaskReceiver(
-    WorkerContext &worker_context, std::unique_ptr<RayletClient> &raylet_client,
-    boost::asio::io_service &io_service, rpc::GrpcServer &server,
+    const WorkerID &worker_id, std::shared_ptr<raylet::RayletClient> &raylet_client,
     const TaskHandler &task_handler)
-    : worker_context_(worker_context),
-      raylet_client_(raylet_client),
-      task_service_(io_service, *this),
-      task_handler_(task_handler) {
-  server.RegisterService(task_service_);
-}
+    : worker_id_(worker_id), raylet_client_(raylet_client), task_handler_(task_handler) {}
 
 void CoreWorkerRayletTaskReceiver::HandleAssignTask(
     const rpc::AssignTaskRequest &request, rpc::AssignTaskReply *reply,
     rpc::SendReplyCallback send_reply_callback) {
   const Task task(request.task());
   const auto &task_spec = task.GetTaskSpecification();
-  RAY_LOG(DEBUG) << "Received task " << task_spec.TaskId();
-  if (task_spec.IsActorTask() && worker_context_.CurrentActorUseDirectCall()) {
-    send_reply_callback(Status::Invalid("This actor only accepts direct calls."), nullptr,
-                        nullptr);
-    return;
-  }
+  RAY_LOG(DEBUG) << "Received task " << task_spec.TaskId() << " is create "
+                 << task_spec.IsActorCreationTask();
 
   // Set the resource IDs for this task.
   // TODO: convert the resource map to protobuf and change this.
-  ResourceMappingType resource_ids;
+  auto resource_ids = std::make_shared<ResourceMappingType>();
   auto resource_infos =
       flatbuffers::GetRoot<protocol::ResourceIdSetInfos>(request.resource_ids().data())
           ->resource_infos();
   for (size_t i = 0; i < resource_infos->size(); ++i) {
     auto const &fractional_resource_ids = resource_infos->Get(i);
     auto &acquired_resources =
-        resource_ids[string_from_flatbuf(*fractional_resource_ids->resource_name())];
+        (*resource_ids)[string_from_flatbuf(*fractional_resource_ids->resource_name())];
 
     size_t num_resource_ids = fractional_resource_ids->resource_ids()->size();
     size_t num_resource_fractions = fractional_resource_ids->resource_fractions()->size();
@@ -55,17 +58,15 @@ void CoreWorkerRayletTaskReceiver::HandleAssignTask(
   }
 
   std::vector<std::shared_ptr<RayObject>> results;
-  auto status = task_handler_(task_spec, resource_ids, &results);
-
-  auto num_returns = task_spec.NumReturns();
-  if (task_spec.IsActorCreationTask() || task_spec.IsActorTask()) {
-    RAY_CHECK(num_returns > 0);
-    // Decrease to account for the dummy object id.
-    num_returns--;
+  ReferenceCounter::ReferenceTableProto borrower_refs;
+  // NOTE(swang): Distributed ref counting does not work for the raylet
+  // transport.
+  auto status = task_handler_(task_spec, resource_ids, &results, &borrower_refs);
+  if (status.IsSystemExit()) {
+    return;
   }
 
-  RAY_LOG(DEBUG) << "Assigned task " << task_spec.TaskId()
-                 << " finished execution. num_returns: " << num_returns;
+  RAY_LOG(DEBUG) << "Assigned task " << task_spec.TaskId() << " finished execution.";
 
   // Notify raylet that current task is done via a `TaskDone` message. This is to
   // ensure that the task is marked as finished by raylet only after previous

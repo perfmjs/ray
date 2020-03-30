@@ -1,16 +1,11 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import logging
 import os
 import sys
 import time
 
-try:
-    import psutil
-except ImportError:
-    psutil = None
+# Import ray before psutil will make sure we use psutil's bundled version
+import ray  # noqa F401
+import psutil  # noqa E402
 
 logger = logging.getLogger(__name__)
 
@@ -58,14 +53,12 @@ class RayOutOfMemoryError(Exception):
                     round(get_shared(psutil.virtual_memory()) / (1024**3), 2))
                 + "currently being used by the Ray object store. You can set "
                 "the object store size with the `object_store_memory` "
-                "parameter when starting Ray, and the max Redis size with "
-                "`redis_max_memory`. Note that Ray assumes all system "
-                "memory is available for use by workers. If your system "
-                "has other applications running, you should manually set "
-                "these memory limits to a lower value.")
+                "parameter when starting Ray.\n---\n"
+                "--- Tip: Use the `ray memory` command to list active "
+                "objects in the cluster.\n---\n")
 
 
-class MemoryMonitor(object):
+class MemoryMonitor:
     """Helper class for raising errors on low memory.
 
     This presents a much cleaner error message to users than what would happen
@@ -109,9 +102,6 @@ class MemoryMonitor(object):
         self.worker_name = worker_name
 
     def raise_if_low_memory(self):
-        if psutil is None:
-            return  # nothing we can do
-
         if time.time() - self.last_checked > self.check_interval:
             if "RAY_DEBUG_DISABLE_MEMORY_MONITOR" in os.environ:
                 return  # escape hatch, not intended for user use

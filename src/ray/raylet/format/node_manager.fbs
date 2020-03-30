@@ -1,3 +1,17 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // raylet protocol specification
 
 // TODO(swang): We put the flatbuffer types in a separate namespace for now to
@@ -34,6 +48,11 @@ enum MessageType:int {
   // For a worker that was blocked on some object(s), tell the raylet
   // that the worker is now unblocked. This is sent from a worker to a raylet.
   NotifyUnblocked,
+  // Notify the current worker is blocked. This is only used by direct task calls;
+  // otherwise the block command is piggybacked on other messages.
+  NotifyDirectCallTaskBlocked,
+  // Notify the current worker is unblocked. This is only used by direct task calls.
+  NotifyDirectCallTaskUnblocked,
   // A request to get the task frontier for an actor, called by the actor when
   // saving a checkpoint.
   GetActorFrontierRequest,
@@ -75,8 +94,8 @@ enum MessageType:int {
   ConnectClient,
   // Set dynamic custom resource.
   SetResourceRequest,
-  // Update the active set of object IDs in use on this worker.
-  ReportActiveObjectIDs,
+  // Subscribe to Plasma updates
+  SubscribePlasmaReady,
 }
 
 table TaskExecutionSpecification {
@@ -137,8 +156,8 @@ table RegisterClientRequest {
 }
 
 table RegisterClientReply {
-  // The IDs of the GPUs that are reserved for this worker.
-  gpu_ids: [int];
+  // GCS ClientID of the local node manager.
+  raylet_id: string;
 }
 
 table RegisterNodeManagerRequest {
@@ -159,13 +178,22 @@ table FetchOrReconstruct {
   object_ids: [string];
   // Do we only want to fetch the objects or also reconstruct them?
   fetch_only: bool;
-  // The current task ID. If fetch_only is false, then this task is blocked.
+  // False for direct call tasks. Blocking for those tasks is handled via the
+  // NotifyDirectCallTaskBlocked/Unblocked IPCs.
+  mark_worker_blocked: bool;
+  // The current task ID.
   task_id: string;
 }
 
 table NotifyUnblocked {
   // The current task ID. This task is no longer blocked.
   task_id: string;
+}
+
+table NotifyDirectCallTaskBlocked {
+}
+
+table NotifyDirectCallTaskUnblocked {
 }
 
 table WaitRequest {
@@ -177,8 +205,10 @@ table WaitRequest {
   timeout: long;
   // Whether to wait until objects appear locally.
   wait_local: bool;
-  // The current task ID. If there are less than num_ready_objects local, then
-  // this task is blocked.
+  // False for direct call tasks. Blocking for those tasks is handled via the
+  // NotifyDirectCallTaskBlocked/Unblocked IPCs.
+  mark_worker_blocked: bool;
+  // The current task ID.
   task_id: string;
 }
 
@@ -250,7 +280,7 @@ table SetResourceRequest {
   client_id: string;
 }
 
-table ReportActiveObjectIDs {
-  // Object IDs that are active in the worker.
-  object_ids: [string];
+table SubscribePlasmaReady {
+  // ObjectID to wait for 
+  object_id: string;
 }

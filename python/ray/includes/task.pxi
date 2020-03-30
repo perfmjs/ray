@@ -64,14 +64,10 @@ cdef class TaskSpec:
         """Return the parent counter of this task."""
         return self.task_spec.get().ParentCounter()
 
-    def function_descriptor_list(self):
+    def function_descriptor(self):
         """Return the function descriptor for this task."""
-        cdef c_vector[c_string] function_descriptor = (
+        return CFunctionDescriptorToPython(
             self.task_spec.get().FunctionDescriptor())
-        results = []
-        for i in range(function_descriptor.size()):
-            results.append(function_descriptor[i])
-        return results
 
     def arguments(self):
         """Return the arguments for the task."""
@@ -96,7 +92,7 @@ cdef class TaskSpec:
                     if metadata == RAW_BUFFER_METADATA:
                         obj = data
                     else:
-                        obj = pickle.loads(data)
+                        obj = data
                     arg_list.append(obj)
         elif lang == <int32_t>LANGUAGE_JAVA:
             arg_list = num_args * ["<java-argument>"]
@@ -108,7 +104,7 @@ cdef class TaskSpec:
         return_id_list = []
         for i in range(self.task_spec.get().NumReturns()):
             return_id_list.append(
-                ObjectID(self.task_spec.get().ReturnId(i).Binary()))
+                ObjectID(self.task_spec.get().ReturnIdForPlasma(i).Binary()))
         return return_id_list
 
     def required_resources(self):

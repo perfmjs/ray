@@ -1,9 +1,26 @@
+// Copyright 2017 The Ray Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//  http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #ifndef RAY_COMMON_GRPC_UTIL_H
 #define RAY_COMMON_GRPC_UTIL_H
 
 #include <google/protobuf/map.h>
 #include <google/protobuf/repeated_field.h>
 #include <grpcpp/grpcpp.h>
+
+#include <sstream>
+
 #include "status.h"
 
 namespace ray {
@@ -39,7 +56,7 @@ class MessageWrapper {
   const Message &GetMessage() const { return *message_; }
 
   /// Get reference of the protobuf message.
-  Message &GetMutableMessage() const { return *message_; }
+  Message &GetMutableMessage() { return *message_; }
 
   /// Serialize the message to a string.
   const std::string Serialize() const { return message_->SerializeAsString(); }
@@ -64,7 +81,11 @@ inline Status GrpcStatusToRayStatus(const grpc::Status &grpc_status) {
   if (grpc_status.ok()) {
     return Status::OK();
   } else {
-    return Status::IOError(grpc_status.error_message());
+    std::stringstream msg;
+    msg << grpc_status.error_code();
+    msg << ": ";
+    msg << grpc_status.error_message();
+    return Status::IOError(msg.str());
   }
 }
 

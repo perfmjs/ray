@@ -1,10 +1,6 @@
 # Code in this file is copied and adapted from
 # https://github.com/openai/evolution-strategies-starter.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from collections import namedtuple
 import logging
 import numpy as np
@@ -12,14 +8,12 @@ import time
 
 import ray
 from ray.rllib.agents import Trainer, with_common_config
-
-from ray.rllib.agents.es import optimizers
-from ray.rllib.agents.es import policies
-from ray.rllib.agents.es import utils
+from ray.rllib.agents.es import optimizers, policies, utils
+from ray.rllib.env.env_context import EnvContext
 from ray.rllib.policy.sample_batch import DEFAULT_POLICY_ID
+from ray.rllib.utils import FilterManager
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.memory import ray_get_and_free
-from ray.rllib.utils import FilterManager
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +49,7 @@ def create_shared_noise(count):
     return noise
 
 
-class SharedNoiseTable(object):
+class SharedNoiseTable:
     def __init__(self, noise):
         self.noise = noise
         assert self.noise.dtype == np.float32
@@ -68,19 +62,21 @@ class SharedNoiseTable(object):
 
 
 @ray.remote
-class Worker(object):
+class Worker:
     def __init__(self,
                  config,
                  policy_params,
                  env_creator,
                  noise,
+                 worker_index,
                  min_task_runtime=0.2):
         self.min_task_runtime = min_task_runtime
         self.config = config
         self.policy_params = policy_params
         self.noise = SharedNoiseTable(noise)
 
-        self.env = env_creator(config["env_config"])
+        env_context = EnvContext(config["env_config"] or {}, worker_index)
+        self.env = env_creator(env_context)
         from ray.rllib import models
         self.preprocessor = models.ModelCatalog.get_preprocessor(
             self.env, config["model"])
@@ -108,12 +104,12 @@ class Worker(object):
         return return_filters
 
     def rollout(self, timestep_limit, add_noise=True):
-        rollout_rewards, rollout_length = policies.rollout(
+        rollout_rewards, rollout_fragment_length = policies.rollout(
             self.policy,
             self.env,
             timestep_limit=timestep_limit,
             add_noise=add_noise)
-        return rollout_rewards, rollout_length
+        return rollout_rewards, rollout_fragment_length
 
     def do_rollouts(self, params, timestep_limit=None):
         # Set the network weights.
@@ -172,9 +168,15 @@ class ESTrainer(Trainer):
 
     @override(Trainer)
     def _init(self, config, env_creator):
+        # PyTorch check.
+        if config["use_pytorch"]:
+            raise ValueError(
+                "ES does not support PyTorch yet! Use tf instead.")
+
         policy_params = {"action_noise_std": 0.01}
 
-        env = env_creator(config["env_config"])
+        env_context = EnvContext(config["env_config"] or {}, worker_index=0)
+        env = env_creator(env_context)
         from ray.rllib import models
         preprocessor = models.ModelCatalog.get_preprocessor(env)
 
@@ -193,8 +195,8 @@ class ESTrainer(Trainer):
         # Create the actors.
         logger.info("Creating actors.")
         self._workers = [
-            Worker.remote(config, policy_params, env_creator, noise_id)
-            for _ in range(config["num_workers"])
+            Worker.remote(config, policy_params, env_creator, noise_id,
+                          idx + 1) for idx in range(config["num_workers"])
         ]
 
         self.episodes_so_far = 0
@@ -290,7 +292,7 @@ class ESTrainer(Trainer):
         return result
 
     @override(Trainer)
-    def compute_action(self, observation):
+    def compute_action(self, observation, *args, **kwargs):
         return self.policy.compute(observation, update=False)[0]
 
     @override(Trainer)

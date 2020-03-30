@@ -1,14 +1,10 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.models.model import restore_original_dimensions, flatten
 from ray.rllib.utils.annotations import PublicAPI
 
 
 @PublicAPI
-class ModelV2(object):
+class ModelV2:
     """Defines a Keras-style abstract network model for use with RLlib.
 
     Custom models should extend either TFModelV2 or TorchModelV2 instead of
@@ -196,6 +192,20 @@ class ModelV2(object):
             i += 1
         return self.__call__(input_dict, states, train_batch.get("seq_lens"))
 
+    def import_from_h5(self, h5_file):
+        """Imports weights from an h5 file.
+
+        Args:
+            h5_file (str): The h5 file name to import weights from.
+
+        Example:
+            >>> trainer = MyTrainer()
+            >>> trainer.import_policy_model_from_h5("/tmp/weights.h5")
+            >>> for _ in range(10):
+            >>>     trainer.train()
+        """
+        raise NotImplementedError
+
     def last_output(self):
         """Returns the last output returned from calling the model."""
         return self._last_output
@@ -205,7 +215,7 @@ class ModelV2(object):
         return NullContextManager()
 
 
-class NullContextManager(object):
+class NullContextManager:
     """No-op context manager"""
 
     def __init__(self):

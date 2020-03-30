@@ -15,6 +15,9 @@ from ray.includes.unique_ids cimport (
     CObjectID,
     CTaskID,
 )
+from ray.includes.function_descriptor cimport (
+    CFunctionDescriptor,
+)
 
 cdef extern from "ray/protobuf/common.pb.h" nogil:
     cdef cppclass RpcTaskSpec "ray::rpc::TaskSpec":
@@ -26,7 +29,6 @@ cdef extern from "ray/protobuf/common.pb.h" nogil:
 
     cdef cppclass RpcTask "ray::rpc::Task":
         RpcTaskSpec *mutable_task_spec()
-
 
 cdef extern from "ray/protobuf/gcs.pb.h" nogil:
     cdef cppclass TaskTableData "ray::rpc::TaskTableData":
@@ -45,14 +47,14 @@ cdef extern from "ray/common/task/task_spec.h" nogil:
         CJobID JobId() const
         CTaskID ParentTaskId() const
         uint64_t ParentCounter() const
-        c_vector[c_string] FunctionDescriptor() const
+        CFunctionDescriptor FunctionDescriptor() const
         c_string FunctionDescriptorString() const
         uint64_t NumArgs() const
         uint64_t NumReturns() const
         c_bool ArgByRef(uint64_t arg_index) const
         int ArgIdCount(uint64_t arg_index) const
         CObjectID ArgId(uint64_t arg_index, uint64_t id_index) const
-        CObjectID ReturnId(uint64_t return_index) const
+        CObjectID ReturnIdForPlasma(uint64_t return_index) const
         const uint8_t *ArgData(uint64_t arg_index) const
         size_t ArgDataSize(uint64_t arg_index) const
         const uint8_t *ArgMetadata(uint64_t arg_index) const

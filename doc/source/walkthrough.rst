@@ -1,14 +1,24 @@
-Walkthrough
-===========
+Ray Core Walkthrough
+====================
 
 This walkthrough will overview the core concepts of Ray:
 
-1. Using remote functions (tasks) [``ray.remote``]
-2. Fetching results (object IDs) [``ray.put``, ``ray.get``, ``ray.wait``]
-3. Using remote classes (actors) [``ray.remote``]
+1. Starting Ray
+2. Using remote functions (tasks) [``ray.remote``]
+3. Fetching results (object IDs) [``ray.put``, ``ray.get``, ``ray.wait``]
+4. Using remote classes (actors) [``ray.remote``]
 
-With Ray, your code will work on a single machine and can be easily scaled to a
-large cluster. To run this walkthrough, install Ray with ``pip install -U ray``.
+With Ray, your code will work on a single machine and can be easily scaled to large cluster.
+
+Installation
+------------
+
+To run this walkthrough, install Ray with ``pip install -U ray``. For the latest wheels (for a snapshot of ``master``), you can use these instructions at :ref:`install-nightlies`.
+
+Starting Ray
+------------
+
+You can start Ray on a single machine by adding this to your python script.
 
 .. code-block:: python
 
@@ -18,11 +28,11 @@ large cluster. To run this walkthrough, install Ray with ``pip install -U ray``.
   # ray.init(address=<cluster-address>) instead.
   ray.init()
 
-See the `Configuration <configure.html>`__ documentation for the various ways to
-configure Ray. To start a multi-node Ray cluster, see the `cluster setup page
-<using-ray-on-a-cluster.html>`__. You can stop ray by calling
-``ray.shutdown()``. To check if Ray is initialized, you can call
-``ray.is_initialized()``.
+  ...
+
+Ray will then be able to utilize all cores of your machine. Find out how to configure the number of cores Ray will use at :ref:`configuring-ray`.
+
+To start a multi-node Ray cluster, see the `cluster setup page <using-ray-on-a-cluster.html>`__.
 
 Remote functions (Tasks)
 ------------------------
@@ -40,7 +50,7 @@ Ray enables arbitrary Python functions to be executed asynchronously. These asyn
     def remote_function():
         return 1
 
-This causes a few things changes in behavior:
+This causes a few changes in behavior:
 
     1. **Invocation:** The regular version is called with ``regular_function()``, whereas the remote version is called with ``remote_function.remote()``.
     2. **Return values:** ``regular_function`` immediately executes and returns ``1``, whereas ``remote_function`` immediately returns an object ID (a future) and then creates a task that will be executed on a worker process. The result can be retrieved with ``ray.get``.
@@ -71,6 +81,9 @@ This causes a few things changes in behavior:
        # These happen in parallel.
        for _ in range(4):
            remote_function.remote()
+
+The invocations are executed in parallel because the call to ``remote_function.remote()`` doesn't block.
+All computation is performed in the background, driven by Ray's internal event loop.
 
 See the `ray.remote package reference <package-ref.html>`__ page for specific documentation on how to use ``ray.remote``.
 
@@ -145,7 +158,7 @@ Below are more examples of resource specifications:
   def f():
       return 1
 
-Further, remote function can return multiple object IDs.
+Further, remote functions can return multiple object IDs.
 
 .. code-block:: python
 
@@ -188,7 +201,7 @@ Object IDs can be created in multiple ways.
 Fetching Results
 ----------------
 
-The command ``ray.get(x_id)`` takes an object ID and creates a Python object
+The command ``ray.get(x_id, timeout=None)`` takes an object ID and creates a Python object
 from the corresponding remote object. First, if the current node's object store
 does not contain the object, the object is downloaded. Then, if the object is a `numpy array <https://docs.scipy.org/doc/numpy/reference/generated/numpy.array.html>`__
 or a collection of numpy arrays, the ``get`` call is zero-copy and returns arrays backed by shared object store memory.
@@ -199,6 +212,22 @@ Otherwise, we deserialize the object data into a Python object.
     y = 1
     obj_id = ray.put(y)
     assert ray.get(obj_id) == 1
+
+You can also set a timeout to return early from a ``get`` that's blocking for too long.
+
+.. code-block:: python
+
+    from ray.exceptions import RayTimeoutError
+
+    @ray.remote
+    def long_running_function()
+        time.sleep(8)
+
+    obj_id = long_running_function.remote()
+    try:
+        ray.get(obj_id, timeout=4)
+    except RayTimeoutError:
+        print("`get` timed out.")
 
 .. autofunction:: ray.get
     :noindex:

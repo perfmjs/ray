@@ -1,7 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import numpy as np
 import copy
 import logging
@@ -53,21 +49,25 @@ class HyperOptSearch(SuggestionAlgorithm):
             results. Defaults to None.
         gamma (float in range (0,1)): parameter governing the tree parzen
             estimators suggestion algorithm. Defaults to 0.25.
+        use_early_stopped_trials (bool): Whether to use early terminated
+            trial results in the optimization process.
 
-    Example:
-        >>> space = {
-        >>>     'width': hp.uniform('width', 0, 20),
-        >>>     'height': hp.uniform('height', -100, 100),
-        >>>     'activation': hp.choice("activation", ["relu", "tanh"])
-        >>> }
-        >>> current_best_params = [{
-        >>>     'width': 10,
-        >>>     'height': 0,
-        >>>     'activation': 0, # The index of "relu"
-        >>> }]
-        >>> algo = HyperOptSearch(
-        >>>     space, max_concurrent=4, metric="mean_loss", mode="min",
-        >>>     points_to_evaluate=current_best_params)
+    .. code-block:: python
+
+        space = {
+            'width': hp.uniform('width', 0, 20),
+            'height': hp.uniform('height', -100, 100),
+            'activation': hp.choice("activation", ["relu", "tanh"])
+        }
+        current_best_params = [{
+            'width': 10,
+            'height': 0,
+            'activation': 0, # The index of "relu"
+        }]
+        algo = HyperOptSearch(
+            space, max_concurrent=4, metric="mean_loss", mode="min",
+            points_to_evaluate=current_best_params)
+
     """
 
     def __init__(self,
@@ -124,9 +124,10 @@ class HyperOptSearch(SuggestionAlgorithm):
         else:
             self.rstate = np.random.RandomState(random_state_seed)
 
-        super(HyperOptSearch, self).__init__(**kwargs)
+        super(HyperOptSearch, self).__init__(
+            metric=self._metric, mode=mode, **kwargs)
 
-    def _suggest(self, trial_id):
+    def suggest(self, trial_id):
         if self._num_live_trials() >= self._max_concurrent:
             return None
 
@@ -171,7 +172,7 @@ class HyperOptSearch(SuggestionAlgorithm):
                           result=None,
                           error=False,
                           early_terminated=False):
-        """Passes the result to HyperOpt unless early terminated or errored.
+        """Notification for the completion of trial.
 
         The result is internally negated when interacting with HyperOpt
         so that HyperOpt can "maximize" this value, as it minimizes on default.
@@ -183,15 +184,24 @@ class HyperOptSearch(SuggestionAlgorithm):
         if error:
             ho_trial["state"] = hpo.base.JOB_STATE_ERROR
             ho_trial["misc"]["error"] = (str(TuneError), "Tune Error")
-        elif early_terminated:
+            self._hpopt_trials.refresh()
+        else:
+            self._process_result(trial_id, result, early_terminated)
+        del self._live_trial_mapping[trial_id]
+
+    def _process_result(self, trial_id, result, early_terminated=False):
+        ho_trial = self._get_hyperopt_trial(trial_id)
+        ho_trial["refresh_time"] = hpo.utils.coarse_utcnow()
+
+        if early_terminated and self._use_early_stopped is False:
             ho_trial["state"] = hpo.base.JOB_STATE_ERROR
             ho_trial["misc"]["error"] = (str(TuneError), "Tune Removed")
-        else:
-            ho_trial["state"] = hpo.base.JOB_STATE_DONE
-            hp_result = self._to_hyperopt_result(result)
-            ho_trial["result"] = hp_result
+            return
+
+        ho_trial["state"] = hpo.base.JOB_STATE_DONE
+        hp_result = self._to_hyperopt_result(result)
+        ho_trial["result"] = hp_result
         self._hpopt_trials.refresh()
-        del self._live_trial_mapping[trial_id]
 
     def _to_hyperopt_result(self, result):
         return {"loss": self._metric_op * result[self._metric], "status": "ok"}

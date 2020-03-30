@@ -1,11 +1,8 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from collections import namedtuple
 import logging
 
-from ray.rllib.utils.debug import log_once, summarize
+from ray.util.debug import log_once
+from ray.rllib.utils.debug import summarize
 from ray.rllib.utils import try_import_tf
 
 tf = try_import_tf()
@@ -16,7 +13,7 @@ TOWER_SCOPE_NAME = "tower"
 logger = logging.getLogger(__name__)
 
 
-class LocalSyncParallelOptimizer(object):
+class LocalSyncParallelOptimizer:
     """Optimizer that runs in parallel across multiple local devices.
 
     LocalSyncParallelOptimizer automatically splits up and loads training data
@@ -170,7 +167,7 @@ class LocalSyncParallelOptimizer(object):
             self.max_per_device_batch_size // self._loaded_max_seq_len * len(
                 self.devices))
         if sequences_per_minibatch < 1:
-            logger.warn(
+            logger.warning(
                 ("Target minibatch size is {}, however the rollout sequence "
                  "length is {}, hence the minibatch size will be raised to "
                  "{}.").format(self.max_per_device_batch_size,

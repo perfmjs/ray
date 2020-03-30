@@ -1,8 +1,6 @@
 Tune User Guide
 ===============
 
-.. tip:: Help make Tune better by taking our 3 minute `Ray Tune User Survey <https://forms.gle/7u5eH1avbTfpZ3dE6>`_!
-
 Tune Overview
 -------------
 
@@ -27,7 +25,7 @@ Training can be done with either the Trainable **Class API** or **function-based
 Trainable API
 ~~~~~~~~~~~~~
 
-The class-based API will require users to subclass ``ray.tune.Trainable``. The Trainable interface `can be found here <tune-package-ref.html#ray.tune.Trainable>`__.
+The class-based API will require users to subclass ``ray.tune.Trainable``. See the API documentation: :ref:`trainable-docstring`.
 
 Here is an example:
 
@@ -65,7 +63,7 @@ User-defined functions will need to have following signature and call ``tune.tra
             tune.track.log(**kwargs)
 
 
-Tune will run this function on a separate thread in a Ray actor process. Note that this API is not checkpointable, since the thread will never return control back to its caller. ``tune.track`` documentation can be `found here <tune-package-ref.html#module-ray.tune.track>`__.
+Tune will run this function on a separate thread in a Ray actor process. Note that this API is not checkpointable, since the thread will never return control back to its caller. ``tune.track`` documentation can be found here: :ref:`track-docstring`.
 
 Both the Trainable and function-based API will have `autofilled metrics <tune-usage.html#auto-filled-results>`__ in addition to the metrics reported.
 
@@ -121,7 +119,7 @@ Tune automatically runs N concurrent trials, where N is the number of CPUs (core
     # If you have 4 CPUs on your machine, this will run 1 trial at a time.
     tune.run(trainable, num_samples=10, resources_per_trial={"cpu": 4})
 
-To leverage GPUs, you can set ``gpu`` in ``resources_per_trial``.  A trial will only be executed if there are resources available. See the section on`resource allocation <tune-usage#resource-allocation-using-gpus>`_, which provides more details about GPU usage and trials that are distributed:
+To leverage GPUs, you can set ``gpu`` in ``resources_per_trial``.  A trial will only be executed if there are resources available. See the section on `resource allocation <tune-usage.html#resource-allocation-using-gpus>`_, which provides more details about GPU usage and trials that are distributed:
 
 .. code-block:: python
 
@@ -187,7 +185,7 @@ You may want to get a summary of multiple experiments that point to the same ``l
     from ray.tune import Analysis
     analysis = Analysis("~/ray_results/example-experiment")
 
-See the `full documentation <tune-package-ref.html#ray.tune.Analysis>`_ for the ``Analysis`` object.
+See the full documentation for the ``Analysis`` object: :ref:`analysis-docstring`.
 
 
 Tune Search Space (Default)
@@ -211,7 +209,7 @@ Use ``tune.sample_from(<func>)`` to sample a value for a hyperparameter. The ``f
         }
     )
 
-Tune provides a couple helper functions for common parameter distributions, wrapping numpy random utilities such as ``np.random.uniform``, ``np.random.choice``, and ``np.random.randn``. See the `Package Reference <tune-package-ref.html#ray.tune.uniform>`_ for more details.
+Tune provides a couple of helper functions for common parameter distributions, wrapping numpy random utilities such as ``np.random.uniform``, ``np.random.choice``, and ``np.random.randn``. See :ref:`tune-sample-docs` for more details.
 
 
 The following shows grid search over two nested parameters combined with random sampling from two lambda functions, generating 9 different trials. Note that the value of ``beta`` depends on the value of ``alpha``, which is represented by referencing ``spec.config.alpha`` in the lambda function. This lets you specify conditional parameter distributions.
@@ -412,9 +410,9 @@ The checkpoint will be saved at a path that looks like ``local_dir/exp_name/tria
 Fault Tolerance
 ---------------
 
-Tune will automatically restart trials from the last checkpoint in case of trial failures/error (if ``max_failures`` is set), both in the single node and distributed setting.
+Tune will automatically restart trials in case of trial failures/error (if ``max_failures != 0``), both in the single node and distributed setting.
 
-In the distributed setting, if using the autoscaler with ``rsync`` enabled, Tune will automatically sync the trial folder with the driver. For example, if a node is lost while a trial (specifically, the corresponding Trainable actor of the trial) is still executing on that node and a checkpoint of the trial exists, Tune will wait until available resources are available to begin executing the trial again.
+Tune will restore trials from the latest checkpoint, where available. In the distributed setting, if using the autoscaler with ``rsync`` enabled, Tune will automatically sync the trial folder with the driver. For example, if a node is lost while a trial (specifically, the corresponding Trainable actor of the trial) is still executing on that node and a checkpoint of the trial exists, Tune will wait until available resources are available to begin executing the trial again.
 
 If the trial/actor is placed on a different node, Tune will automatically push the previous checkpoint file to that node and restore the remote trial actor state, allowing the trial to resume from the latest checkpoint even after failure.
 
@@ -461,7 +459,7 @@ You often will want to compute a large object (e.g., training data, model weight
 
     import ray
     from ray import tune
-    from ray.tune.util import pin_in_object_store, get_pinned_object
+    from ray.tune.utils import pin_in_object_store, get_pinned_object
 
     import numpy as np
 
@@ -494,23 +492,38 @@ In the example below, each trial will be stopped either when it completes 10 ite
 
 For more flexibility, you can pass in a function instead. If a function is passed in, it must take ``(trial_id, result)`` as arguments and return a boolean (``True`` if trial should be stopped and ``False`` otherwise).
 
-You can use this to stop all trials after the criteria is fulfilled by any individual trial:
+.. code-block:: python
+
+
+    def stopper(trial_id, result):
+        return result["mean_accuracy"] / result["training_iteration"] > 5
+
+    tune.run(my_trainable, stop=stopper)
+
+Finally, you can implement the ``Stopper`` abstract class for stopping entire experiments. For example, the following example stops all trials after the criteria is fulfilled by any individual trial, and prevents new ones from starting:
 
 .. code-block:: python
 
-    class Stopper:
+    from ray.tune import Stopper
+
+    class CustomStopper(Stopper):
         def __init__(self):
             self.should_stop = False
 
-        def stop(self, trial_id, result):
+        def __call__(self, trial_id, result):
             if not self.should_stop and result['foo'] > 10:
                 self.should_stop = True
             return self.should_stop
 
-    stopper = Stopper()
-    tune.run(my_trainable, stop=stopper.stop)
+        def stop_all(self):
+            """Returns whether to stop trials and prevent new ones from starting."""
+            return self.should_stop
 
-Note that in the above example all trials will not stop immediately, but will do so once their current iterations are complete.
+    stopper = CustomStopper()
+    tune.run(my_trainable, stop=stopper)
+
+
+Note that in the above example the currently running trials will not stop immediately but will do so once their current iterations are complete.
 
 Auto-Filled Results
 -------------------
@@ -537,11 +550,11 @@ The following fields will automatically show up on the console output, if provid
 TensorBoard
 -----------
 
-To visualize learning in tensorboard, install TensorFlow:
+To visualize learning in tensorboard, install TensorFlow or tensorboardX:
 
 .. code-block:: bash
 
-    $ pip install tensorflow
+    $ pip install tensorboardX # or pip install tensorflow
 
 Then, after you run a experiment, you can visualize your experiment with TensorBoard by specifying the output directory of your results. Note that if you running Ray on a remote cluster, you can forward the tensorboard port to your local machine through SSH using ``ssh -L 6006:localhost:6006 <address>``:
 
@@ -598,13 +611,12 @@ You can pass in your own logging mechanisms to output logs in custom formats as 
     from ray.tune.logger import DEFAULT_LOGGERS
 
     tune.run(
-        MyTrainableClass
+        MyTrainableClass,
         name="experiment_name",
         loggers=DEFAULT_LOGGERS + (CustomLogger1, CustomLogger2)
     )
 
-These loggers will be called along with the default Tune loggers. All loggers must inherit the `Logger interface <tune-package-ref.html#ray.tune.logger.Logger>`__. Tune enables default loggers for Tensorboard, CSV, and JSON formats. You can also check out `logger.py <https://github.com/ray-project/ray/blob/master/python/ray/tune/logger.py>`__ for implementation details. An example can be found in `logging_example.py <https://github.com/ray-project/ray/blob/master/python/ray/tune/examples/logging_example.py>`__.
-
+These loggers will be called along with the default Tune loggers. All loggers must inherit the Logger interface (:ref:`logger-interface`). Tune enables default loggers for Tensorboard, CSV, and JSON formats. You can also check out `logger.py <https://github.com/ray-project/ray/blob/master/python/ray/tune/logger.py>`__ for implementation details. An example can be found in `logging_example.py <https://github.com/ray-project/ray/blob/master/python/ray/tune/examples/logging_example.py>`__.
 
 MLFlow
 ~~~~~~
@@ -648,42 +660,6 @@ You can customize this to specify arbitrary storages with the ``sync_to_cloud`` 
         sync_to_cloud=custom_sync_func,
     )
 
-Tune Client API
----------------
-
-You can interact with an ongoing experiment with the Tune Client API. The Tune Client API is organized around REST, which includes resource-oriented URLs, accepts form-encoded requests, returns JSON-encoded responses, and uses standard HTTP protocol.
-
-To allow Tune to receive and respond to your API calls, you have to start your experiment with ``with_server=True``:
-
-.. code-block:: python
-
-    tune.run(..., with_server=True, server_port=4321)
-
-The easiest way to use the Tune Client API is with the built-in TuneClient. To use TuneClient, verify that you have the ``requests`` library installed:
-
-.. code-block:: bash
-
-    $ pip install requests
-
-Then, on the client side, you can use the following class. If on a cluster, you may want to forward this port (e.g. ``ssh -L <local_port>:localhost:<remote_port> <address>``) so that you can use the Client on your local machine.
-
-.. autoclass:: ray.tune.web_server.TuneClient
-    :members:
-
-For an example notebook for using the Client API, see the `Client API Example <https://github.com/ray-project/ray/tree/master/python/ray/tune/TuneClient.ipynb>`__.
-
-The API also supports curl. Here are the examples for getting trials (``GET /trials/[:id]``):
-
-.. code-block:: bash
-
-    $ curl http://<address>:<port>/trials
-    $ curl http://<address>:<port>/trials/<trial_id>
-
-And stopping a trial (``PUT /trials/:id``):
-
-.. code-block:: bash
-
-    $ curl -X PUT http://<address>:<port>/trials/<trial_id>
 
 Debugging
 ---------
@@ -695,47 +671,6 @@ By default, Tune will run hyperparameter evaluations on multiple processes. Howe
     ray.init(local_mode=True)
 
 Note that some behavior such as writing to files by depending on the current working directory in a Trainable and setting global process variables may not work as expected. Local mode with multiple configuration evaluations will interleave computation, so it is most naturally used when running a single configuration evaluation.
-
-
-Tune CLI (Experimental)
------------------------
-
-``tune`` has an easy-to-use command line interface (CLI) to manage and monitor your experiments on Ray. To do this, verify that you have the ``tabulate`` library installed:
-
-.. code-block:: bash
-
-    $ pip install tabulate
-
-Here are a few examples of command line calls.
-
-- ``tune list-trials``: List tabular information about trials within an experiment. Empty columns will be dropped by default. Add the ``--sort`` flag to sort the output by specific columns. Add the ``--filter`` flag to filter the output in the format ``"<column> <operator> <value>"``. Add the ``--output`` flag to write the trial information to a specific file (CSV or Pickle). Add the ``--columns`` and ``--result-columns`` flags to select specific columns to display.
-
-.. code-block:: bash
-
-    $ tune list-trials [EXPERIMENT_DIR] --output note.csv
-
-    +------------------+-----------------------+------------+
-    | trainable_name   | experiment_tag        | trial_id   |
-    |------------------+-----------------------+------------|
-    | MyTrainableClass | 0_height=40,width=37  | 87b54a1d   |
-    | MyTrainableClass | 1_height=21,width=70  | 23b89036   |
-    | MyTrainableClass | 2_height=99,width=90  | 518dbe95   |
-    | MyTrainableClass | 3_height=54,width=21  | 7b99a28a   |
-    | MyTrainableClass | 4_height=90,width=69  | ae4e02fb   |
-    +------------------+-----------------------+------------+
-    Dropped columns: ['status', 'last_update_time']
-    Please increase your terminal size to view remaining columns.
-    Output saved at: note.csv
-
-    $ tune list-trials [EXPERIMENT_DIR] --filter "trial_id == 7b99a28a"
-
-    +------------------+-----------------------+------------+
-    | trainable_name   | experiment_tag        | trial_id   |
-    |------------------+-----------------------+------------|
-    | MyTrainableClass | 3_height=54,width=21  | 7b99a28a   |
-    +------------------+-----------------------+------------+
-    Dropped columns: ['status', 'last_update_time']
-    Please increase your terminal size to view remaining columns.
 
 
 Further Questions or Issues?

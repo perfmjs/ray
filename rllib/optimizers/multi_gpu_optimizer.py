@@ -1,7 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import logging
 import math
 import numpy as np
@@ -14,6 +10,7 @@ from ray.rllib.optimizers.policy_optimizer import PolicyOptimizer
 from ray.rllib.optimizers.multi_gpu_impl import LocalSyncParallelOptimizer
 from ray.rllib.optimizers.rollout import collect_samples
 from ray.rllib.utils.annotations import override
+from ray.rllib.utils.sgd import averaged
 from ray.rllib.utils.timer import TimerStat
 from ray.rllib.policy.sample_batch import SampleBatch, DEFAULT_POLICY_ID, \
     MultiAgentBatch
@@ -44,7 +41,7 @@ class LocalMultiGPUOptimizer(PolicyOptimizer):
                  workers,
                  sgd_batch_size=128,
                  num_sgd_iter=10,
-                 sample_batch_size=200,
+                 rollout_fragment_length=200,
                  num_envs_per_worker=1,
                  train_batch_size=1024,
                  num_gpus=0,
@@ -56,7 +53,8 @@ class LocalMultiGPUOptimizer(PolicyOptimizer):
             workers (WorkerSet): all workers
             sgd_batch_size (int): SGD minibatch size within train batch size
             num_sgd_iter (int): number of passes to learn on per train batch
-            sample_batch_size (int): size of batches to sample from workers
+            rollout_fragment_length (int): size of batches to sample from
+                workers.
             num_envs_per_worker (int): num envs in each rollout worker
             train_batch_size (int): size of batches to learn on
             num_gpus (int): number of GPUs to use for data-parallel SGD
@@ -70,7 +68,7 @@ class LocalMultiGPUOptimizer(PolicyOptimizer):
         self.batch_size = sgd_batch_size
         self.num_sgd_iter = num_sgd_iter
         self.num_envs_per_worker = num_envs_per_worker
-        self.sample_batch_size = sample_batch_size
+        self.rollout_fragment_length = rollout_fragment_length
         self.train_batch_size = train_batch_size
         self.shuffle_sequences = shuffle_sequences
         if not num_gpus:
@@ -135,9 +133,10 @@ class LocalMultiGPUOptimizer(PolicyOptimizer):
 
         with self.sample_timer:
             if self.workers.remote_workers():
-                samples = collect_samples(
-                    self.workers.remote_workers(), self.sample_batch_size,
-                    self.num_envs_per_worker, self.train_batch_size)
+                samples = collect_samples(self.workers.remote_workers(),
+                                          self.rollout_fragment_length,
+                                          self.num_envs_per_worker,
+                                          self.train_batch_size)
                 if samples.count > self.train_batch_size * 2:
                     logger.info(
                         "Collected more training samples than expected "
@@ -205,8 +204,8 @@ class LocalMultiGPUOptimizer(PolicyOptimizer):
                         for k, v in batch_fetches[LEARNER_STATS_KEY].items():
                             iter_extra_fetches[k].append(v)
                     logger.debug("{} {}".format(i,
-                                                _averaged(iter_extra_fetches)))
-                fetches[policy_id] = _averaged(iter_extra_fetches)
+                                                averaged(iter_extra_fetches)))
+                fetches[policy_id] = averaged(iter_extra_fetches)
 
         self.num_steps_sampled += samples.count
         self.num_steps_trained += tuples_per_device * len(self.devices)
@@ -224,11 +223,3 @@ class LocalMultiGPUOptimizer(PolicyOptimizer):
                                         3),
                 "learner": self.learner_stats,
             })
-
-
-def _averaged(kv):
-    out = {}
-    for k, v in kv.items():
-        if v[0] is not None and not isinstance(v[0], dict):
-            out[k] = np.mean(v)
-    return out

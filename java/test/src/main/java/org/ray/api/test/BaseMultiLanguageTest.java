@@ -1,17 +1,22 @@
 package org.ray.api.test;
 
-import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.gson.Gson;
 import java.io.File;
 import java.lang.ProcessBuilder.Redirect;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.ray.api.Ray;
+import org.ray.runtime.config.RayConfig;
+import org.ray.runtime.util.NetworkUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testng.Assert;
 import org.testng.SkipException;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -65,9 +70,16 @@ public abstract class BaseMultiLanguageTest {
       }
     }
 
+    String nodeManagerPort = String.valueOf(NetworkUtil.getUnusedPort());
+
+    // jars in the `ray` wheel doesn't contains test classes, so we add test classes explicitly.
+    // Since mvn test classes contains `test` in path and bazel test classes is located at a jar
+    // with `test` included in the name, we can check classpath `test` to filter out test classes.
+    String classpath = Stream.of(System.getProperty("java.class.path").split(":"))
+        .filter(s -> !s.contains(" ") && s.contains("test"))
+        .collect(Collectors.joining(":"));
+    String workerOptions = new Gson().toJson(ImmutableList.of("-classpath", classpath));
     // Start ray cluster.
-    String workerOptions =
-        " -classpath " + System.getProperty("java.class.path");
     List<String> startCommand = ImmutableList.of(
         "ray",
         "start",
@@ -75,25 +87,22 @@ public abstract class BaseMultiLanguageTest {
         "--redis-port=6379",
         String.format("--plasma-store-socket-name=%s", PLASMA_STORE_SOCKET_NAME),
         String.format("--raylet-socket-name=%s", RAYLET_SOCKET_NAME),
+        String.format("--node-manager-port=%s", nodeManagerPort),
         "--load-code-from-local",
         "--include-java",
-        "--java-worker-options=" + workerOptions
+        "--java-worker-options=" + workerOptions,
+        "--internal-config=" + new Gson().toJson(RayConfig.create().rayletConfigParameters)
     );
-    String numWorkersPerProcessJava = System
-        .getProperty("ray.raylet.config.num_workers_per_process_java");
-    if (!Strings.isNullOrEmpty(numWorkersPerProcessJava)) {
-      startCommand = ImmutableList.<String>builder().addAll(startCommand)
-          .add(String.format("--internal-config={\"num_workers_per_process_java\": %s}",
-              numWorkersPerProcessJava)).build();
-    }
     if (!executeCommand(startCommand, 10, getRayStartEnv())) {
       throw new RuntimeException("Couldn't start ray cluster.");
     }
 
     // Connect to the cluster.
+    Assert.assertNull(Ray.internal());
     System.setProperty("ray.redis.address", "127.0.0.1:6379");
     System.setProperty("ray.object-store.socket-name", PLASMA_STORE_SOCKET_NAME);
     System.setProperty("ray.raylet.socket-name", RAYLET_SOCKET_NAME);
+    System.setProperty("ray.raylet.node-manager-port", nodeManagerPort);
     Ray.init();
   }
 
@@ -113,6 +122,7 @@ public abstract class BaseMultiLanguageTest {
     System.clearProperty("ray.redis.address");
     System.clearProperty("ray.object-store.socket-name");
     System.clearProperty("ray.raylet.socket-name");
+    System.clearProperty("ray.raylet.node-manager-port");
 
     // Stop ray cluster.
     final List<String> stopCommand = ImmutableList.of(
